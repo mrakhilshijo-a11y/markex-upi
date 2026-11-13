@@ -5,9 +5,9 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { syncAndroidAllowlist } from './sync-android-allowlist.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const REPO_ROOT = path.resolve(__dirname, '..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const REPO_ROOT = path.resolve(moduleDirname, '..');
 
 console.log('🚀 Starting certified Android APK compilation for YouPI SMS Gateway...');
 

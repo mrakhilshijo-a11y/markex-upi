@@ -5,12 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Database } from '../database.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 describe('Database Schema Parity & Integrity (Postgres vs SQLite) (#13)', () => {
-  const pgSchemaPath = path.join(__dirname, '..', 'schema.sql');
-  const sqliteSchemaPath = path.join(__dirname, '..', 'sqlite-schema.sql');
+  const pgSchemaPath = path.join(moduleDirname, '..', 'schema.sql');
+  const sqliteSchemaPath = path.join(moduleDirname, '..', 'sqlite-schema.sql');
 
   const pgSchema = fs.readFileSync(pgSchemaPath, 'utf8');
   const sqliteSchema = fs.readFileSync(sqliteSchemaPath, 'utf8');

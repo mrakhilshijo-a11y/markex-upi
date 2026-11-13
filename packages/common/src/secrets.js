@@ -4,9 +4,9 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { encrypt, decrypt } from './crypto.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
 // Resolved from this file, not cwd: every service must read the same files.
-const SECRETS_DIR = path.resolve(__dirname, '../../../data/.secrets');
+const SECRETS_DIR = path.resolve(moduleDirname, '../../../data/.secrets');
 
 const cache = new Map();
 

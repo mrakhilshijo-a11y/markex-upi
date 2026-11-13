@@ -9,8 +9,8 @@ import { ReceivingAccountRepository } from './repositories/receiving-account.rep
 import { CustomerRepository } from './repositories/customer.repository.js';
 
 const { Client } = pg;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /**
  * Postgres-compatible outbox trigger (replaces SQLite INSERT OR IGNORE trigger in schema.sql).
@@ -101,7 +101,7 @@ export async function applyPostgresSchema(options = {}) {
     console.warn('[migrate-postgres] Prefer DATABASE_URL_UNPOOLED for DDL (pooled URL detected).');
   }
 
-  const schemaPath = path.join(__dirname, 'schema.sql');
+  const schemaPath = path.join(moduleDirname, 'schema.sql');
   let schemaSql = fs.readFileSync(schemaPath, 'utf8');
   schemaSql = preparePostgresSchemaSql(schemaSql);
 

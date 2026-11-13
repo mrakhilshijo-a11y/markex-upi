@@ -5,9 +5,9 @@ import { BrowserLauncher } from '@youpi/observer-sdk';
 import { getObserverToken } from '@youpi/common';
 import { BankEmailParser } from './parser.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../../..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const rootDir = path.resolve(moduleDirname, '../../..');
 
 function isMailGoogleUrl(urlString) {
   if (!urlString || typeof urlString !== 'string') return false;

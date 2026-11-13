@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { ProcessManager } from './process-manager.js';
 import { getAdminToken, safeEqual } from '@youpi/common';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /** Security headers applied to every response served by the control center. */
 const BASE_SECURITY_HEADERS = Object.freeze({
@@ -39,7 +39,7 @@ export class ControlCenterServer {
    */
   constructor(options = {}) {
     this.processManager = options.processManager || new ProcessManager();
-    this.htmlTemplatePath = path.join(__dirname, 'views', 'dashboard.html');
+    this.htmlTemplatePath = path.join(moduleDirname, 'views', 'dashboard.html');
     this.template = fs.readFileSync(this.htmlTemplatePath, 'utf8');
     this.sseClients = new Set();
 
@@ -202,7 +202,7 @@ export class ControlCenterServer {
       // Self-hosted UI fonts (CSP blocks third-party font CDNs)
       const fontMatch = /^\/fonts\/(dm-sans|sora)\.woff2$/.exec(pathname);
       if (fontMatch && method === 'GET') {
-        const fontPath = path.resolve(__dirname, '../public/fonts', `${fontMatch[1]}.woff2`);
+        const fontPath = path.resolve(moduleDirname, '../public/fonts', `${fontMatch[1]}.woff2`);
         if (fs.existsSync(fontPath)) {
           res.writeHead(200, {
             'Content-Type': 'font/woff2',

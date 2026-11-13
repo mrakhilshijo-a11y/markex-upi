@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generateQrSvg } from '@youpi/core';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../../../..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const rootDir = path.resolve(moduleDirname, '../../../..');
 
 let BerryProtocolClass = null;
 let qrcodeLib = null;

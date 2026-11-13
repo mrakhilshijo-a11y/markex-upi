@@ -8,8 +8,8 @@ import { MerchantRepository } from './repositories/merchant.repository.js';
 import { ReceivingAccountRepository } from './repositories/receiving-account.repository.js';
 import { CustomerRepository } from './repositories/customer.repository.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /**
  * Runs database migrations and applies base seeds.
@@ -22,7 +22,7 @@ export async function runMigrations(targetDb) {
     const seeded = await seedPostgresDefaults(db);
     return { db, defaultMerchant: seeded.defaultMerchant };
   }
-  const schemaPath = path.join(__dirname, 'sqlite-schema.sql');
+  const schemaPath = path.join(moduleDirname, 'sqlite-schema.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
   // Detect if customers table has an obsolete schema (phone_number/merchant_id instead of email/mobile_number, or password_hash NOT NULL).

@@ -5,9 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { runMigrations } from './migrate.js';
 import { PostgresDatabase, shouldUsePostgres } from './postgres-database.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '../../..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const repoRoot = path.resolve(moduleDirname, '../../..');
 
 /**
  * Checks if core tables exist and executes migrations if not yet initialized.

@@ -7,8 +7,8 @@ import { ObservationNormalizer, BankSmsParser, BankEmailParser, generateQrSvg } 
 import { toRupeesString, toPaise, verifyHmac, resolveRuntimeUrls, resolveSecret, safeEqual, hasBearer, getObserverToken, isAllowedNotificationPackage } from '@youpi/common';
 import { isAdminRequest } from '../auth-guard.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /** Upper bound on a single bank notification body accepted by the verification pipeline. */
 const MAX_OBSERVATION_TEXT_CHARS = 64 * 1024;
@@ -819,10 +819,10 @@ export function registerPollerRoutes(server, ctx) {
   // GET /api/v1/admin/sms-gateway/download-apk & GET /youpi-sms-gateway.apk
   const serveApk = async (req, res) => {
     const apkLocations = [
-      path.resolve(__dirname, '../../public/youpi-sms-gateway.apk'),
-      path.resolve(__dirname, '../../../merchant-admin/public/youpi-sms-gateway.apk'),
-      path.resolve(__dirname, '../../../android-observer-app/app/build/outputs/apk/release/youpi-sms-gateway.apk'),
-      path.resolve(__dirname, '../../../android-observer-app/youpi-sms-gateway.apk')
+      path.resolve(moduleDirname, '../../public/youpi-sms-gateway.apk'),
+      path.resolve(moduleDirname, '../../../merchant-admin/public/youpi-sms-gateway.apk'),
+      path.resolve(moduleDirname, '../../../android-observer-app/app/build/outputs/apk/release/youpi-sms-gateway.apk'),
+      path.resolve(moduleDirname, '../../../android-observer-app/youpi-sms-gateway.apk')
     ];
 
     let foundPath = null;
@@ -835,7 +835,7 @@ export function registerPollerRoutes(server, ctx) {
 
     if (!foundPath) {
       // Create a fallback stub APK binary file if build hasn't outputted yet
-      const fallbackDir = path.resolve(__dirname, '../../public');
+      const fallbackDir = path.resolve(moduleDirname, '../../public');
       if (!fs.existsSync(fallbackDir)) fs.mkdirSync(fallbackDir, { recursive: true });
       foundPath = path.join(fallbackDir, 'youpi-sms-gateway.apk');
       if (!fs.existsSync(foundPath)) {

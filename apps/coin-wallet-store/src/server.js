@@ -8,8 +8,8 @@ import { YoupiPaymentClient } from '@youpi/merchant-sdk';
 import { getCoinStoreWebhookSecret, resolveCourseAmount, listMarkexCourses, formatInrFromPaise, loadRootEnv } from '@youpi/common';
 import crypto from 'node:crypto';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /** Security headers applied to every HTML response served by the store. */
 const BASE_SECURITY_HEADERS = Object.freeze({
@@ -84,7 +84,7 @@ export function renderTemplate(template, values) {
   });
 }
 
-loadRootEnv(path.resolve(__dirname, '../../..'));
+loadRootEnv(path.resolve(moduleDirname, '../../..'));
 
 export class CoinWalletStoreServer {
   /**
@@ -118,7 +118,7 @@ export class CoinWalletStoreServer {
       || process.env.COIN_STORE_IDEMPOTENCY_PATH
       || (underTest
         ? ':memory:'
-        : path.resolve(__dirname, '../../../data/coin-wallet-fulfillment.sqlite'));
+        : path.resolve(moduleDirname, '../../../data/coin-wallet-fulfillment.sqlite'));
     this.openFulfillmentLedger();
 
     this.paymentClient = new YoupiPaymentClient({
@@ -131,14 +131,14 @@ export class CoinWalletStoreServer {
     this.walletCoins = 50 + this.sumClaimedCoins();
     this.transactionHistory = this.loadClaimHistory();
 
-    this.storeHtml = fs.readFileSync(path.join(__dirname, 'store.html'), 'utf8');
-    this.markexHtml = fs.readFileSync(path.join(__dirname, 'markex-academy.html'), 'utf8');
-    this.walletHtml = fs.readFileSync(path.join(__dirname, 'wallet.html'), 'utf8');
-    this.orderSuccessHtml = fs.readFileSync(path.join(__dirname, 'order-success.html'), 'utf8');
-    this.orderFailedHtml = fs.readFileSync(path.join(__dirname, 'order-failed.html'), 'utf8');
-    this.orderSuspiciousHtml = fs.readFileSync(path.join(__dirname, 'order-suspicious.html'), 'utf8');
-    this.orderExpiredHtml = fs.readFileSync(path.join(__dirname, 'order-expired.html'), 'utf8');
-    this.orderCancelledHtml = fs.readFileSync(path.join(__dirname, 'order-cancelled.html'), 'utf8');
+    this.storeHtml = fs.readFileSync(path.join(moduleDirname, 'store.html'), 'utf8');
+    this.markexHtml = fs.readFileSync(path.join(moduleDirname, 'markex-academy.html'), 'utf8');
+    this.walletHtml = fs.readFileSync(path.join(moduleDirname, 'wallet.html'), 'utf8');
+    this.orderSuccessHtml = fs.readFileSync(path.join(moduleDirname, 'order-success.html'), 'utf8');
+    this.orderFailedHtml = fs.readFileSync(path.join(moduleDirname, 'order-failed.html'), 'utf8');
+    this.orderSuspiciousHtml = fs.readFileSync(path.join(moduleDirname, 'order-suspicious.html'), 'utf8');
+    this.orderExpiredHtml = fs.readFileSync(path.join(moduleDirname, 'order-expired.html'), 'utf8');
+    this.orderCancelledHtml = fs.readFileSync(path.join(moduleDirname, 'order-cancelled.html'), 'utf8');
   }
 
   openFulfillmentLedger() {
@@ -262,7 +262,7 @@ export class CoinWalletStoreServer {
 
       // SERVE LOCAL PUBLIC ASSETS: /assets/*, /css/*, /js/*
       if ((pathname.startsWith('/assets/') || pathname.startsWith('/css/') || pathname.startsWith('/js/')) && (method === 'GET' || method === 'HEAD')) {
-        const publicDir = path.resolve(__dirname, '../public');
+        const publicDir = path.resolve(moduleDirname, '../public');
         const safeRelative = path.normalize(pathname.replace(/^\//, '')).replace(/^(\.\.(\/|\\|$))+/, '');
         const targetPath = path.join(publicDir, safeRelative);
         const rel = path.relative(publicDir, targetPath);
@@ -295,7 +295,7 @@ export class CoinWalletStoreServer {
 
       // GET /youpi.js or /sdk/youpi-checkout.js (Universal Frontend Integration Script)
       if (pathname === '/youpi.js' || pathname === '/sdk/youpi-checkout.js' || pathname === '/sdk/youpi.js') {
-        const sdkPath = path.resolve(__dirname, '../../checkout-portal/src/sdk/youpi.js');
+        const sdkPath = path.resolve(moduleDirname, '../../checkout-portal/src/sdk/youpi.js');
         if (fs.existsSync(sdkPath)) {
           res.writeHead(200, {
             'Content-Type': 'application/javascript; charset=utf-8',
@@ -309,7 +309,7 @@ export class CoinWalletStoreServer {
 
       // GET /openapi.yaml (Public Developer Integration Specification)
       if (pathname === '/openapi.yaml') {
-        const openApiPath = path.resolve(__dirname, '../../../openapi.yaml');
+        const openApiPath = path.resolve(moduleDirname, '../../../openapi.yaml');
         if (fs.existsSync(openApiPath)) {
           res.writeHead(200, {
             'Content-Type': 'text/yaml; charset=utf-8',
@@ -389,7 +389,7 @@ export class CoinWalletStoreServer {
 
       // MARKEX academy home (replaces demo coin store on /)
       if ((pathname === '/' || pathname === '/academy' || pathname === '/store') && (method === 'GET' || method === 'HEAD')) {
-        try { this.markexHtml = fs.readFileSync(path.join(__dirname, 'markex-academy.html'), 'utf8'); } catch {}
+        try { this.markexHtml = fs.readFileSync(path.join(moduleDirname, 'markex-academy.html'), 'utf8'); } catch {}
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
@@ -404,7 +404,7 @@ export class CoinWalletStoreServer {
 
       // Legacy demo coin store
       if ((pathname === '/demo-store' || pathname === '/coins') && (method === 'GET' || method === 'HEAD')) {
-        try { this.storeHtml = fs.readFileSync(path.join(__dirname, 'store.html'), 'utf8'); } catch {}
+        try { this.storeHtml = fs.readFileSync(path.join(moduleDirname, 'store.html'), 'utf8'); } catch {}
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
@@ -502,7 +502,7 @@ export class CoinWalletStoreServer {
 
       // GET /wallet
       if ((pathname === '/wallet') && (method === 'GET' || method === 'HEAD')) {
-        try { this.walletHtml = fs.readFileSync(path.join(__dirname, 'wallet.html'), 'utf8'); } catch {}
+        try { this.walletHtml = fs.readFileSync(path.join(moduleDirname, 'wallet.html'), 'utf8'); } catch {}
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
@@ -517,7 +517,7 @@ export class CoinWalletStoreServer {
 
       // GET /order-success or /success
       if ((pathname === '/order-success' || pathname === '/success') && (method === 'GET' || method === 'HEAD')) {
-        try { this.orderSuccessHtml = fs.readFileSync(path.join(__dirname, 'order-success.html'), 'utf8'); } catch {}
+        try { this.orderSuccessHtml = fs.readFileSync(path.join(moduleDirname, 'order-success.html'), 'utf8'); } catch {}
         const orderId = url.searchParams.get('order_id') || url.searchParams.get('orderId') || 'ORDER-DEMO';
         const amount = url.searchParams.get('amount') || '499.00';
         const utr = url.searchParams.get('utr') || url.searchParams.get('bankRef') || '123456789012';
@@ -544,7 +544,7 @@ export class CoinWalletStoreServer {
 
       // GET /order-failed or /failed
       if ((pathname === '/order-failed' || pathname === '/failed') && (method === 'GET' || method === 'HEAD')) {
-        try { this.orderFailedHtml = fs.readFileSync(path.join(__dirname, 'order-failed.html'), 'utf8'); } catch {}
+        try { this.orderFailedHtml = fs.readFileSync(path.join(moduleDirname, 'order-failed.html'), 'utf8'); } catch {}
         const orderId = url.searchParams.get('order_id') || url.searchParams.get('orderId') || 'ORDER-DEMO';
         const reason = url.searchParams.get('reason') || 'Transaction verification timed out or declined.';
         let rendered = renderTemplate(this.orderFailedHtml, {
@@ -566,7 +566,7 @@ export class CoinWalletStoreServer {
 
       // GET /order-suspicious or /suspicious
       if ((pathname === '/order-suspicious' || pathname === '/suspicious') && (method === 'GET' || method === 'HEAD')) {
-        try { this.orderSuspiciousHtml = fs.readFileSync(path.join(__dirname, 'order-suspicious.html'), 'utf8'); } catch {}
+        try { this.orderSuspiciousHtml = fs.readFileSync(path.join(moduleDirname, 'order-suspicious.html'), 'utf8'); } catch {}
         const orderId = url.searchParams.get('order_id') || url.searchParams.get('orderId') || 'ORDER-DEMO';
         let rendered = renderTemplate(this.orderSuspiciousHtml, { ORDER_ID: orderId });
 
@@ -582,7 +582,7 @@ export class CoinWalletStoreServer {
 
       // GET /order-expired or /expired
       if ((pathname === '/order-expired' || pathname === '/expired') && (method === 'GET' || method === 'HEAD')) {
-        try { this.orderExpiredHtml = fs.readFileSync(path.join(__dirname, 'order-expired.html'), 'utf8'); } catch {}
+        try { this.orderExpiredHtml = fs.readFileSync(path.join(moduleDirname, 'order-expired.html'), 'utf8'); } catch {}
         const orderId = url.searchParams.get('order_id') || url.searchParams.get('orderId') || 'ORDER-DEMO';
         let rendered = renderTemplate(this.orderExpiredHtml, { ORDER_ID: orderId });
 
@@ -598,7 +598,7 @@ export class CoinWalletStoreServer {
 
       // GET /order-cancelled or /cancelled
       if ((pathname === '/order-cancelled' || pathname === '/cancelled') && (method === 'GET' || method === 'HEAD')) {
-        try { this.orderCancelledHtml = fs.readFileSync(path.join(__dirname, 'order-cancelled.html'), 'utf8'); } catch {}
+        try { this.orderCancelledHtml = fs.readFileSync(path.join(moduleDirname, 'order-cancelled.html'), 'utf8'); } catch {}
         const orderId = url.searchParams.get('order_id') || url.searchParams.get('orderId') || 'ORDER-DEMO';
         let rendered = renderTemplate(this.orderCancelledHtml, { ORDER_ID: orderId });
 

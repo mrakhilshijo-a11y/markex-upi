@@ -7,9 +7,9 @@ import { resolveRuntimeUrls } from '../packages/common/src/runtime-config.js';
 import { startCloudflaredSafely } from '../packages/common/src/tunnel-command.js';
 import { loadRootEnv } from '../packages/common/src/load-root-env.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const rootDir = path.resolve(moduleDirname, '..');
 
 // Load `.env` then `.env.local` (Neon) without overriding existing process.env
 loadRootEnv(rootDir);

@@ -9,10 +9,10 @@ import { startServer as startPaymentApi } from '../../../apps/payment-api/src/in
 import { AndroidObserverDriver } from '../driver.js';
 import { PaymentStatus, ObservationAttributionStatus, resolveSecret, generateHmac } from '@youpi/common';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 const TEST_PORT = 6328;
-const PERSIST_DB_PATH = path.resolve(__dirname, '../../../data/test_stage3_persistence.sqlite');
+const PERSIST_DB_PATH = path.resolve(moduleDirname, '../../../data/test_stage3_persistence.sqlite');
 
 describe('Mitto Pay Stage 3 — Synthetic Integration & Financial Safety Tests', () => {
   let apiInstance;

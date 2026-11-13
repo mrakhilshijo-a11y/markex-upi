@@ -13,9 +13,9 @@ import { authHeadersFor } from '../../../../scripts/test-support.js';
 import { WebhookEngine } from '@youpi/core';
 import { PaymentSessionRepository, CustomerRepository, MerchantRepository } from '@youpi/db';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../../../..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const rootDir = path.resolve(moduleDirname, '../../../..');
 
 describe('Gateway Hardening & Invariant Protection Test Suite (#23, #25, #26, #27, #28)', () => {
   let apiInstance;

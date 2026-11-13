@@ -6,8 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { getDatabase, MerchantRepository, SupportTicketRepository } from '@youpi/db';
 import { getAdminToken, safeEqual, loadRootEnv } from '@youpi/common';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
 
 /** Security headers applied to every response served by the merchant admin. */
 const BASE_SECURITY_HEADERS = Object.freeze({
@@ -45,7 +45,7 @@ function sanitizedForwardHeaders(req, targetHost) {
   return headers;
 }
 
-loadRootEnv(path.resolve(__dirname, '../../..'));
+loadRootEnv(path.resolve(moduleDirname, '../../..'));
 
 export class AdminServer {
   /**
@@ -59,7 +59,7 @@ export class AdminServer {
     this.apiBaseUrl = options.apiBaseUrl || process.env.PAYMENT_API_URL || process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100';
     this.merchantRepo = new MerchantRepository(this.db);
     this.ticketRepo = new SupportTicketRepository(this.db);
-    this.htmlTemplatePath = path.join(__dirname, 'views', 'admin.html');
+    this.htmlTemplatePath = path.join(moduleDirname, 'views', 'admin.html');
     this.template = fs.readFileSync(this.htmlTemplatePath, 'utf8');
   }
 
@@ -229,9 +229,9 @@ export class AdminServer {
       // Download Android Companion APK
       if (pathname === '/youpi-sms-gateway.apk' || pathname === '/api/v1/admin/sms-gateway/download-apk') {
         const apkCandidates = [
-          path.resolve(__dirname, '../public/youpi-sms-gateway.apk'),
-          path.resolve(__dirname, '../../payment-api/public/youpi-sms-gateway.apk'),
-          path.resolve(__dirname, '../../android-observer-app/youpi-sms-gateway.apk')
+          path.resolve(moduleDirname, '../public/youpi-sms-gateway.apk'),
+          path.resolve(moduleDirname, '../../payment-api/public/youpi-sms-gateway.apk'),
+          path.resolve(moduleDirname, '../../android-observer-app/youpi-sms-gateway.apk')
         ];
         let apkPath = null;
         for (const p of apkCandidates) {
@@ -257,7 +257,7 @@ export class AdminServer {
       // Self-hosted UI fonts (CSP blocks third-party font CDNs)
       const fontMatch = /^\/fonts\/(dm-sans|sora)\.woff2$/.exec(pathname);
       if (fontMatch && req.method === 'GET') {
-        const fontPath = path.resolve(__dirname, '../public/fonts', `${fontMatch[1]}.woff2`);
+        const fontPath = path.resolve(moduleDirname, '../public/fonts', `${fontMatch[1]}.woff2`);
         if (fs.existsSync(fontPath)) {
           res.writeHead(200, {
             'Content-Type': 'font/woff2',

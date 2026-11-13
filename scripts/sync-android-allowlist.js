@@ -3,9 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ALLOWED_NOTIFICATION_PACKAGES } from '../packages/common/src/upi-providers.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const REPO_ROOT = path.resolve(__dirname, '..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const REPO_ROOT = path.resolve(moduleDirname, '..');
 
 /**
  * Synchronizes the Android NotificationListener allowlist in Java with the

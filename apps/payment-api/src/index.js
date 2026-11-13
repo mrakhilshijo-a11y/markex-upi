@@ -4,9 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PaymentStatus, loadRootEnv } from '@youpi/common';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../../..');
+const moduleFilename = fileURLToPath(import.meta.url);
+const moduleDirname = path.dirname(moduleFilename);
+const rootDir = path.resolve(moduleDirname, '../../..');
 
 loadRootEnv(rootDir);
 import {
@@ -136,7 +136,7 @@ export async function createPaymentApp(customDb = null, options = {}) {
     || process.env.BASE_CHECKOUT_URL
     || 'http://localhost:7000';
   try {
-    const rootEnv = path.resolve(__dirname, '../../../.env');
+    const rootEnv = path.resolve(moduleDirname, '../../../.env');
     if (fs.existsSync(rootEnv)) {
       const raw = fs.readFileSync(rootEnv, 'utf8');
       for (const line of raw.split(/\r?\n/)) {

@@ -10,9 +10,9 @@ import { Database, MerchantRepository, PaymentSessionRepository } from '@youpi/d
 import { authHeadersFor } from '../../../../scripts/test-support.js';
 import { checkoutFrameHeaders, isProductionLike } from '../server.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
 const checkoutView = fs.readFileSync(
-  path.join(__dirname, '..', 'views', 'checkout.html'),
+  path.join(moduleDirname, '..', 'views', 'checkout.html'),
   'utf8'
 );
 

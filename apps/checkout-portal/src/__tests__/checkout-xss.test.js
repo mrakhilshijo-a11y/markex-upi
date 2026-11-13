@@ -9,7 +9,7 @@ import { startCoinWalletStore } from '../../../coin-wallet-store/src/index.js';
 import { CheckoutServer, escapeHtml, escapeJsString, serializeForScript, renderTemplate } from '../server.js';
 import { renderTemplate as renderStoreTemplate } from '../../../coin-wallet-store/src/server.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Payloads that must never escape their interpolation context.
 const HOSTILE_VALUES = [
@@ -220,7 +220,7 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
   });
 
   describe('checkout.html redirect sanitisation', () => {
-    const view = fs.readFileSync(path.join(__dirname, '..', 'views', 'checkout.html'), 'utf8');
+    const view = fs.readFileSync(path.join(moduleDirname, '..', 'views', 'checkout.html'), 'utf8');
 
     test('sanitizeRedirectUrl only accepts http and https', () => {
       assert.ok(view.includes('function sanitizeRedirectUrl(candidate)'));
@@ -249,7 +249,7 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
 
     test('the SDK declares its own origin for referrer-less embeds', () => {
       const sdk = fs.readFileSync(
-        path.join(__dirname, '../../../../packages/merchant-sdk/src/youpi.js'),
+        path.join(moduleDirname, '../../../../packages/merchant-sdk/src/youpi.js'),
         'utf8'
       );
       assert.ok(sdk.includes('youpiParentOrigin='));
@@ -263,8 +263,8 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
 
   describe('merchant-sdk message listener origin checks', () => {
     for (const dir of [
-      path.join(__dirname, '../../../../packages/merchant-sdk/src'),
-      path.join(__dirname, '../sdk')
+      path.join(moduleDirname, '../../../../packages/merchant-sdk/src'),
+      path.join(moduleDirname, '../sdk')
     ]) {
       for (const file of ['youpi.js', 'youpi-checkout.js']) {
         test(`${path.basename(dir)}/${file} ignores messages from an unexpected origin`, () => {
@@ -314,7 +314,7 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
 
   describe('merchant-admin escaping helpers', () => {
     const view = fs.readFileSync(
-      path.join(__dirname, '../../../merchant-admin/src/views/admin.html'),
+      path.join(moduleDirname, '../../../merchant-admin/src/views/admin.html'),
       'utf8'
     );
 
