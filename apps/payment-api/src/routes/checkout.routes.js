@@ -49,7 +49,7 @@ async function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
   // If session does not have a device binding yet:
   if (!session.deviceId) {
     if (requestingDeviceId) {
-      const credCheck = verifyRegisteredDeviceCredentials({
+      const credCheck = await verifyRegisteredDeviceCredentials({
         deviceId: requestingDeviceId,
         deviceToken,
         deviceSignature,
@@ -89,7 +89,7 @@ async function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
 
   // Session HAS a bound device:
   // Require matching deviceId AND valid cryptographic credential (token or signature).
-  const validation = validateSessionDeviceAccess({
+  const validation = await validateSessionDeviceAccess({
     session,
     requestingDeviceId,
     deviceToken,
@@ -2180,7 +2180,7 @@ export function registerCheckoutRoutes(server, ctx) {
     const newDeviceSignature = req.headers['x-device-signature'] || body?.deviceSignature || null;
     const newSignaturePayload = req.headers['x-device-payload'] || body?.signaturePayload || null;
 
-    const credCheck = verifyRegisteredDeviceCredentials({
+    const credCheck = await verifyRegisteredDeviceCredentials({
       deviceId: newDeviceId,
       deviceToken: newDeviceToken,
       deviceSignature: newDeviceSignature,

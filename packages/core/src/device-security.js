@@ -285,7 +285,7 @@ export function verifyDeviceSignature(publicKey, dataToVerify, signatureBase64, 
  * }} params
  * @returns {{ valid: boolean, error?: string, message?: string, device?: any }}
  */
-export function verifyRegisteredDeviceCredentials({
+export async function verifyRegisteredDeviceCredentials({
   deviceId,
   deviceToken,
   deviceSignature,
@@ -307,7 +307,7 @@ export function verifyRegisteredDeviceCredentials({
     };
   }
 
-  const dev = deviceRepo.findById(deviceId);
+  const dev = await deviceRepo.findById(deviceId);
   if (!dev || dev.status !== 'ACTIVE' || (typeof dev.publicKey === 'string' && dev.publicKey.startsWith('adhoc_'))) {
     return {
       valid: false,
@@ -339,7 +339,7 @@ export function verifyRegisteredDeviceCredentials({
   if (hasToken) {
     let tokenOk = false;
     if (typeof deviceRepo.verifyToken === 'function') {
-      tokenOk = deviceRepo.verifyToken(deviceId, deviceToken.trim());
+      tokenOk = await deviceRepo.verifyToken(deviceId, deviceToken.trim());
     } else if (dev.deviceToken) {
       tokenOk = safeEqual(dev.deviceToken, deviceToken.trim()) && verifyDeviceCredential(deviceId, deviceToken.trim());
     } else {
@@ -391,7 +391,7 @@ export function verifyRegisteredDeviceCredentials({
  *   requestingDeviceId?: string|null
  * }}
  */
-export function validateSessionDeviceAccess(options) {
+export async function validateSessionDeviceAccess(options) {
   const { session, requestingDeviceId, deviceToken, deviceSignature, signaturePayload, deviceRepo } = options || {};
 
   if (!session) {
@@ -419,7 +419,7 @@ export function validateSessionDeviceAccess(options) {
       };
     }
 
-    const credCheck = verifyRegisteredDeviceCredentials({
+    const credCheck = await verifyRegisteredDeviceCredentials({
       deviceId: requestingDeviceId,
       deviceToken,
       deviceSignature,
@@ -460,7 +460,7 @@ export function validateSessionDeviceAccess(options) {
   }
 
   // Verify the bound device is registered, active, and that the caller supplied a valid token or signature
-  const credCheck = verifyRegisteredDeviceCredentials({
+  const credCheck = await verifyRegisteredDeviceCredentials({
     deviceId: boundDeviceId,
     deviceToken,
     deviceSignature,

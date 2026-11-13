@@ -169,7 +169,7 @@ export function registerPaymentRoutes(server, ctx) {
     const signaturePayload = body.signaturePayload || req.headers['x-device-payload'] || null;
 
     if (deviceId) {
-      const credCheck = verifyRegisteredDeviceCredentials({
+      const credCheck = await verifyRegisteredDeviceCredentials({
         deviceId,
         deviceToken,
         deviceSignature,
