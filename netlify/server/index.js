@@ -160,6 +160,6 @@ publicServer.listen(publicPort, '0.0.0.0', () => {
 export default publicServer;
 
 export const config = {
-  region: 'us-east-1',
-  size: 'medium',
+  region: 'cmh',
+  size: 'small',
 };
