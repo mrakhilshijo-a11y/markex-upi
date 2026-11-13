@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -77,8 +78,11 @@ export class Database {
         dbPath = path.resolve(repoRoot, 'data/youpi_pg.sqlite');
       }
       const dir = path.dirname(dbPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      try {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.accessSync(dir, fs.constants.W_OK);
+      } catch {
+        dbPath = path.join(os.tmpdir(), 'youpi_pg.sqlite');
       }
       this.db = new DatabaseSync(dbPath);
     }

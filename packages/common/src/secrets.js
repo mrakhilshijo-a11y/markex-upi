@@ -6,13 +6,30 @@ import { fileURLToPath } from 'node:url';
 import { encrypt, decrypt } from './crypto.js';
 
 const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
-// Local services share data/.secrets. Netlify's bundle cannot write the repo,
-// so generated secrets for that process live in the instance tmp dir.
-const SECRETS_DIR = (process.env.NETLIFY === 'true' || process.env.AWS_LAMBDA_FUNCTION_NAME)
-  ? path.join(os.tmpdir(), 'youpi-secrets')
-  : path.resolve(moduleDirname, '../../../data/.secrets');
-
 const cache = new Map();
+let secretsDirCache = null;
+
+/**
+ * Local services share data/.secrets. The Netlify server filesystem is
+ * read-only outside /tmp, and NETLIFY is not set at runtime, so a failed
+ * mkdir falls back to the instance temp directory.
+ */
+function secretsDirectory() {
+  const explicit = (process.env.YOUPI_SECRETS_DIR || '').trim();
+  if (explicit) return explicit;
+  if (secretsDirCache) return secretsDirCache;
+  const preferred = path.resolve(moduleDirname, '../../../data/.secrets');
+  try {
+    fs.mkdirSync(preferred, { recursive: true, mode: 0o700 });
+    secretsDirCache = preferred;
+    return preferred;
+  } catch {
+    const fallback = path.join(os.tmpdir(), 'youpi-secrets');
+    fs.mkdirSync(fallback, { recursive: true, mode: 0o700 });
+    secretsDirCache = fallback;
+    return fallback;
+  }
+}
 
 /**
  * Resolves a service secret: explicit env var first, else a random value
@@ -26,11 +43,12 @@ export function resolveSecret(name, envVar) {
   if (fromEnv) return fromEnv;
   if (cache.has(name)) return cache.get(name);
 
-  const file = path.join(SECRETS_DIR, name);
+  const secretsDir = secretsDirectory();
+  const file = path.join(secretsDir, name);
   let value = '';
   try { value = fs.readFileSync(file, 'utf8').trim(); } catch {}
   if (!value) {
-    fs.mkdirSync(SECRETS_DIR, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
     const fresh = crypto.randomBytes(32).toString('hex');
     try {
       fs.writeFileSync(file, fresh, { flag: 'wx', mode: 0o600 });
@@ -42,7 +60,7 @@ export function resolveSecret(name, envVar) {
   }
   // Harden permissions for pre-existing stores as well as freshly generated keys.
   // chmod can be unavailable on some hosts (e.g. Windows), so fail best-effort here.
-  try { fs.chmodSync(SECRETS_DIR, 0o700); } catch {}
+  try { fs.chmodSync(secretsDir, 0o700); } catch {}
   try { fs.chmodSync(file, 0o600); } catch {}
   cache.set(name, value);
   return value;

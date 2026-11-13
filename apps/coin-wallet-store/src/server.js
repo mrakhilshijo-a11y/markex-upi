@@ -119,14 +119,19 @@ export class CoinWalletStoreServer {
     this.orders = new Map();
 
     const underTest = process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
-    const onNetlify = process.env.NETLIFY === 'true' || Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+    const preferredLedger = path.resolve(moduleDirname, '../../../data/coin-wallet-fulfillment.sqlite');
+    let ledgerPath = preferredLedger;
+    if (!underTest && !options.idempotencyPath && !process.env.COIN_STORE_IDEMPOTENCY_PATH) {
+      try {
+        fs.mkdirSync(path.dirname(preferredLedger), { recursive: true });
+        fs.accessSync(path.dirname(preferredLedger), fs.constants.W_OK);
+      } catch {
+        ledgerPath = path.join(os.tmpdir(), 'coin-wallet-fulfillment.sqlite');
+      }
+    }
     this.idempotencyPath = options.idempotencyPath
       || process.env.COIN_STORE_IDEMPOTENCY_PATH
-      || (underTest
-        ? ':memory:'
-        : onNetlify
-          ? path.join(os.tmpdir(), 'coin-wallet-fulfillment.sqlite')
-          : path.resolve(moduleDirname, '../../../data/coin-wallet-fulfillment.sqlite'));
+      || (underTest ? ':memory:' : ledgerPath);
     this.publicDir = appFile('../public', 'apps/coin-wallet-store/public');
     this.openFulfillmentLedger();
 

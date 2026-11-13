@@ -8,6 +8,7 @@
  *   /*                 → academy store
  */
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadRootEnv } from '../../packages/common/src/load-root-env.js';
@@ -16,6 +17,10 @@ const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(moduleDirname, '../..');
 
 loadRootEnv(rootDir);
+
+// Netlify sets NETLIFY during the build only. Runtime code must not depend on it.
+process.env.NETLIFY = 'true';
+process.env.YOUPI_SECRETS_DIR = process.env.YOUPI_SECRETS_DIR || path.join(os.tmpdir(), 'youpi-secrets');
 
 process.env.YOUPI_MODE = process.env.YOUPI_MODE || 'production';
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
