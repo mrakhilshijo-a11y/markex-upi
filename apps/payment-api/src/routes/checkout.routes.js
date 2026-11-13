@@ -1046,7 +1046,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     } else if (studentName && studentName !== customer.name) {
       try {
-        ctx.db.execute(
+        await ctx.db.execute(
           `UPDATE customers SET name = ?, updated_at = ? WHERE id = ?`,
           [studentName, new Date().toISOString(), customer.id]
         );
@@ -1068,50 +1068,59 @@ export function registerCheckoutRoutes(server, ctx) {
       ttlHours: 24
     });
 
-    ctx.db.execute(`
+    // Merge metadata in JS — portable across SQLite and Neon (no json_set/json()).
+    const boundMetadata = {
+      ...(session.metadata && typeof session.metadata === 'object' ? session.metadata : {}),
+      studentName,
+      studentMobile,
+      studentEmail,
+      guestCheckout: true,
+      markexManualVerification: true,
+      verificationMode: 'manual',
+    };
+
+    await ctx.db.execute(`
       UPDATE payment_sessions
-      SET customer_id = ?, updated_at = ?,
-          metadata = json_set(
-            COALESCE(metadata, '{}'),
-            '$.studentName', ?,
-            '$.studentMobile', ?,
-            '$.studentEmail', ?,
-            '$.guestCheckout', json('true'),
-            '$.markexManualVerification', json('true'),
-            '$.verificationMode', 'manual'
-          )
+      SET customer_id = ?, updated_at = ?, metadata = ?
       WHERE id = ?
     `, [
       customer.id,
       new Date().toISOString(),
-      studentName,
-      studentMobile,
-      studentEmail,
+      JSON.stringify(boundMetadata),
       params.id
     ]);
 
     let queueResult = { status: session.status, queuePosition: session.queuePosition, expiresAt: session.expiresAt };
+    const activeAccount = !session.receivingAccountId && ctx.accountRepo
+      ? await ctx.accountRepo.findActiveForMerchant(session.merchantId)
+      : null;
     const targetAccountId = session.receivingAccountId
-      || ctx.accountRepo?.findActiveForMerchant(session.merchantId)?.id
-      || session.metadata?.receivingAccountSnapshot?.id;
+      || activeAccount?.id
+      || session.metadata?.receivingAccountSnapshot?.id
+      || boundMetadata.receivingAccountSnapshot?.id;
 
     // Ensure receiving account is assigned for UPI QR generation
     if (!session.receivingAccountId && targetAccountId) {
       const account = await ctx.accountRepo.findById(targetAccountId);
-      ctx.db.execute(`
+      const receivingAccountSnapshot = account ? {
+        id: account.id,
+        upiId: account.upiId,
+        payeeName: account.payeeName,
+        isMerchantEnabled: account.isMerchantEnabled
+      } : { id: targetAccountId };
+      const withAccountMeta = {
+        ...boundMetadata,
+        receivingAccountSnapshot,
+      };
+      await ctx.db.execute(`
         UPDATE payment_sessions
         SET receiving_account_id = ?,
-            metadata = json_set(COALESCE(metadata, '{}'), '$.receivingAccountSnapshot', json(?)),
+            metadata = ?,
             updated_at = ?
         WHERE id = ?
       `, [
         targetAccountId,
-        JSON.stringify(account ? {
-          id: account.id,
-          upiId: account.upiId,
-          payeeName: account.payeeName,
-          isMerchantEnabled: account.isMerchantEnabled
-        } : { id: targetAccountId }),
+        JSON.stringify(withAccountMeta),
         new Date().toISOString(),
         params.id
       ]);
@@ -1188,7 +1197,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // Deduplicate UTR claims when provided
     if (utr) {
-      const dup = ctx.db.queryOne(`
+      const dup = await ctx.db.queryOne(`
         SELECT id FROM payment_sessions
         WHERE id != ? AND upper(customer_utr) = upper(?) AND status IN ('MANUAL_REVIEW','SUCCESS','RECONCILED','OBSERVED_SUCCESS')
         LIMIT 1
@@ -1200,20 +1209,25 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     const now = new Date().toISOString();
-    ctx.db.execute(`
+    const reviewMetadata = {
+      ...(session.metadata && typeof session.metadata === 'object' ? session.metadata : {}),
+      pendingAdminVerification: true,
+      studentPaymentClaimAt: now,
+    };
+    await ctx.db.execute(`
       UPDATE payment_sessions
       SET status = ?,
           customer_utr = COALESCE(?, customer_utr),
           utr_submitted_at = ?,
           updated_at = ?,
-          metadata = json_set(COALESCE(metadata, '{}'), '$.pendingAdminVerification', json('true'), '$.studentPaymentClaimAt', ?)
+          metadata = ?
       WHERE id = ?
-    `, [PaymentStatus.MANUAL_REVIEW, utr || null, now, now, now, session.id]);
+    `, [PaymentStatus.MANUAL_REVIEW, utr || null, now, now, JSON.stringify(reviewMetadata), session.id]);
 
     // Free UPI slot so the next student can pay while admin reviews
     if (session.receivingAccountId) {
       try {
-        ctx.db.execute(`
+        await ctx.db.execute(`
           UPDATE payment_receiving_accounts
           SET is_slot_busy = 0, current_active_session_id = NULL
           WHERE id = ? AND current_active_session_id = ?

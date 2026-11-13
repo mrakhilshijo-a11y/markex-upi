@@ -32,17 +32,19 @@ export class CustomerSessionRepository {
 
     const sql = `
       INSERT INTO customer_sessions (id, customer_id, token, expires_at, is_active, ip_address, user_agent, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     // The bearer token is returned to the client once and never read back from the database,
     // so only a keyed blind index is stored. A database dump therefore cannot be replayed
     // as valid sessions, which a plaintext (or plain-hashed) column would allow.
+    // Bind is_active as a real boolean so Neon/Postgres accepts it (SQLite coerces true→1).
     await this.db.execute(sql, [
       id,
       data.customerId,
       blindIndex(token, INDEX_NS),
       expiresAt.toISOString(),
+      true,
       data.ipAddress || null,
       data.userAgent || null,
       now.toISOString(),

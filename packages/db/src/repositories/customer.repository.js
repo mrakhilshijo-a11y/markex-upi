@@ -55,7 +55,7 @@ export class CustomerRepository {
 
     const otpCode = data.otpCode || null;
     const otpExpiresAt = data.otpExpiresAt || null;
-    const isPhoneVerified = data.isPhoneVerified ? 1 : 0;
+    const isPhoneVerified = Boolean(data.isPhoneVerified);
     const now = new Date().toISOString();
 
     const sql = `
