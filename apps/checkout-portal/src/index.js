@@ -1,5 +1,4 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isInvokedPath } from '@youpi/common';
 import { CheckoutServer } from './server.js';
 
 export function startCheckoutServer(port = null, options = {}) {
@@ -24,6 +23,6 @@ export function startCheckoutServer(port = null, options = {}) {
 }
 
 // Auto-run if executed directly as main script
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('apps/checkout-portal/src/index.js')) {
   startCheckoutServer();
 }

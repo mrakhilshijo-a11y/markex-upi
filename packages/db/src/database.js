@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { runMigrations } from './migrate.js';
 import { PostgresDatabase, shouldUsePostgres } from './postgres-database.js';
 
 const moduleFilename = fileURLToPath(import.meta.url);
@@ -17,6 +16,7 @@ export async function ensureDatabaseInitialized(db) {
   if (db.driver === 'postgres') {
     return null;
   }
+  const { runMigrations } = await import('./migrate.js');
   try {
     const row = await db.queryOne("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='merchants'");
     if (!row || Number(row.count) === 0) {
@@ -90,11 +90,18 @@ export class Database {
     } catch {}
 
     if (!options.inMemory && options.autoMigrate !== false) {
-      this._ready = ensureDatabaseInitialized(this);
+      // Queries wait on ready(), and initialization uses those queries.
+      // Skip the wait only while this promise is the one running.
+      this._initializing = true;
+      this._ready = ensureDatabaseInitialized(this).finally(() => {
+        this._initializing = false;
+      });
+      this._ready.catch(() => {});
     }
   }
 
   async ready() {
+    if (this._initializing) return;
     if (this._ready) await this._ready;
   }
 

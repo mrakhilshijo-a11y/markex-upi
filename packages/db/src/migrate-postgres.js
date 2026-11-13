@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding, isValidVpa } from '@youpi/common';
+import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding, isValidVpa, resolveRepoFile, isInvokedPath } from '@youpi/common';
 import { PostgresDatabase } from './postgres-database.js';
 import { MerchantRepository } from './repositories/merchant.repository.js';
 import { ReceivingAccountRepository } from './repositories/receiving-account.repository.js';
@@ -101,7 +101,7 @@ export async function applyPostgresSchema(options = {}) {
     console.warn('[migrate-postgres] Prefer DATABASE_URL_UNPOOLED for DDL (pooled URL detected).');
   }
 
-  const schemaPath = path.join(moduleDirname, 'schema.sql');
+  const schemaPath = resolveRepoFile(moduleDirname, 'packages/db/src/schema.sql', 'schema.sql');
   let schemaSql = fs.readFileSync(schemaPath, 'utf8');
   schemaSql = preparePostgresSchemaSql(schemaSql);
 
@@ -258,7 +258,7 @@ export async function runPostgresMigrations(options = {}) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('packages/db/src/migrate-postgres.js')) {
   console.log('Running YOUPI PG Postgres migrations...');
   runPostgresMigrations()
     .then((result) => {

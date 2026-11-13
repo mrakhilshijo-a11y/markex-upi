@@ -1,5 +1,4 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isInvokedPath } from '@youpi/common';
 import { CoinWalletStoreServer } from './server.js';
 
 export function startCoinWalletStore(port = null, options = {}) {
@@ -25,6 +24,6 @@ export function startCoinWalletStore(port = null, options = {}) {
 }
 
 // Auto-run if executed directly as main script
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('apps/coin-wallet-store/src/index.js')) {
   startCoinWalletStore();
 }

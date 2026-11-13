@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding, isValidVpa } from '@youpi/common';
+import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding, isValidVpa, resolveRepoFile, isInvokedPath } from '@youpi/common';
 import { getDatabase } from './database.js';
 import { MerchantRepository } from './repositories/merchant.repository.js';
 import { ReceivingAccountRepository } from './repositories/receiving-account.repository.js';
@@ -22,7 +22,7 @@ export async function runMigrations(targetDb) {
     const seeded = await seedPostgresDefaults(db);
     return { db, defaultMerchant: seeded.defaultMerchant };
   }
-  const schemaPath = path.join(moduleDirname, 'sqlite-schema.sql');
+  const schemaPath = resolveRepoFile(moduleDirname, 'packages/db/src/sqlite-schema.sql', 'sqlite-schema.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
   // Detect if customers table has an obsolete schema (phone_number/merchant_id instead of email/mobile_number, or password_hash NOT NULL).
@@ -349,7 +349,7 @@ export async function reinitializeCustomerIdentity(targetDb) {
 }
 
 // Auto-run if executed directly as script
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('packages/db/src/migrate.js')) {
   console.log('Running YOUPI PG database migrations...');
   const result = await runMigrations();
   console.log(`Migration completed successfully. Default merchant: ${result.defaultMerchant.businessName} (${result.defaultMerchant.id})`);

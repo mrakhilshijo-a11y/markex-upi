@@ -1,5 +1,5 @@
 [build]
-  command = "npm install"
+  command = "npm install && node scripts/stage-netlify-assets.mjs"
   publish = "netlify/public"
   functions = "netlify/functions"
 

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PaymentStatus, loadRootEnv } from '@youpi/common';
+import { PaymentStatus, loadRootEnv, isInvokedPath } from '@youpi/common';
 
 const moduleFilename = fileURLToPath(import.meta.url);
 const moduleDirname = path.dirname(moduleFilename);
@@ -489,7 +489,7 @@ export async function startServer(port = null, customDb = null) {
 }
 
 // Auto-run if executed directly as main script
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('apps/payment-api/src/index.js')) {
   startServer().catch((err) => {
     console.error('[Payment API] Failed to start:', err?.message || err);
     process.exit(1);

@@ -44,13 +44,13 @@ function applyPublicUrls(origin) {
   ];
   for (const key of keys) {
     const cur = String(process.env[key] || '');
-    if (!cur || cur.includes('localhost') || cur.includes('127.0.0.1')) {
+    if (!cur || cur.includes('localhost') || cur.includes('127.0.0.1') || !cur.startsWith(origin)) {
       process.env[key] = origin;
     }
   }
   for (const key of ['YOUPI_ALLOWED_ORIGINS', 'YOUPI_ALLOWED_RETURN_ORIGINS', 'CHECKOUT_FRAME_ANCESTORS']) {
     const cur = String(process.env[key] || '');
-    if (!cur || cur.includes('localhost')) {
+    if (!cur || cur.includes('localhost') || !cur.includes(origin)) {
       process.env[key] = origin;
     }
   }
@@ -120,9 +120,10 @@ async function bootInternals() {
   console.log('[netlify-server] Internal services ready', INTERNAL);
 }
 
+let bootError = null;
 const boot = bootInternals().catch((err) => {
-  console.error('[netlify-server] boot failed:', err?.message || err);
-  process.exit(1);
+  bootError = err;
+  console.error('[netlify-server] boot failed:', err?.stack || err?.message || err);
 });
 
 const publicPort = Number(process.env.PORT || 8080);
@@ -145,8 +146,19 @@ const publicServer = http.createServer(async (req, res) => {
   } catch {}
 
   if (pathname === '/.netlify/health' || pathname === '/healthz') {
+    if (bootError) {
+      res.writeHead(503, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: bootError.message || 'boot failed' }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (bootError) {
+    res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('MARKEX is starting. Retry in a moment.');
     return;
   }
 
@@ -157,9 +169,8 @@ publicServer.listen(publicPort, '0.0.0.0', () => {
   console.log(`[netlify-server] Listening on ${publicPort}`);
 });
 
-export default publicServer;
-
 export const config = {
   region: 'cmh',
   size: 'small',
+  includedFiles: ['assets/**'],
 };

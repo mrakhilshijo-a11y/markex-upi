@@ -1,12 +1,16 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { encrypt, decrypt } from './crypto.js';
 
 const moduleDirname = path.dirname(fileURLToPath(import.meta.url));
-// Resolved from this file, not cwd: every service must read the same files.
-const SECRETS_DIR = path.resolve(moduleDirname, '../../../data/.secrets');
+// Local services share data/.secrets. Netlify's bundle cannot write the repo,
+// so generated secrets for that process live in the instance tmp dir.
+const SECRETS_DIR = (process.env.NETLIFY === 'true' || process.env.AWS_LAMBDA_FUNCTION_NAME)
+  ? path.join(os.tmpdir(), 'youpi-secrets')
+  : path.resolve(moduleDirname, '../../../data/.secrets');
 
 const cache = new Map();
 

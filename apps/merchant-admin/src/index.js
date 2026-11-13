@@ -1,5 +1,4 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isInvokedPath } from '@youpi/common';
 import { AdminServer } from './server.js';
 import { getDatabase, runMigrations, ensureDatabaseInitialized } from '@youpi/db';
 
@@ -29,6 +28,6 @@ export async function startAdminServer(port = null, options = {}) {
 }
 
 // Auto-run if executed directly as main script
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isInvokedPath('apps/merchant-admin/src/index.js')) {
   startAdminServer();
 }

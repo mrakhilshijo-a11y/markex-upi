@@ -4,10 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateQrSvg, generateStandSvg, generateStandHtml, formatIndianMobile } from '@youpi/core';
-import { getInternalServiceToken, buildStandUpiUri, toPaise, loadRootEnv } from '@youpi/common';
+import { getInternalServiceToken, buildStandUpiUri, toPaise, loadRootEnv, resolveRepoFile } from '@youpi/common';
 
 const moduleFilename = fileURLToPath(import.meta.url);
 const moduleDirname = path.dirname(moduleFilename);
+
+function appFile(localRelative, repoRelative) {
+  return resolveRepoFile(moduleDirname, repoRelative, localRelative);
+}
 
 /** Security headers applied to every response served by the portal. */
 const BASE_SECURITY_HEADERS = Object.freeze({
@@ -173,8 +177,10 @@ export class CheckoutServer {
     } catch {}
 
     this.apiBaseUrl = options.apiBaseUrl || process.env.PAYMENT_API_URL || process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100';
-    this.htmlTemplatePath = path.join(moduleDirname, 'views', 'checkout.html');
-    this.sdkScriptPath = path.join(moduleDirname, 'sdk', 'youpi-checkout.js');
+    this.htmlTemplatePath = appFile('views/checkout.html', 'apps/checkout-portal/src/views/checkout.html');
+    this.sdkScriptPath = appFile('sdk/youpi-checkout.js', 'apps/checkout-portal/src/sdk/youpi-checkout.js');
+    this.partialsDir = appFile('views/partials', 'apps/checkout-portal/src/views/partials');
+    this.publicDir = appFile('../public', 'apps/checkout-portal/public');
     this.template = fs.readFileSync(this.htmlTemplatePath, 'utf8');
   }
 
@@ -194,7 +200,7 @@ export class CheckoutServer {
   loadTemplateWithPartials() {
     try {
       let content = fs.readFileSync(this.htmlTemplatePath, 'utf8');
-      const partialsDir = path.resolve(moduleDirname, 'views', 'partials');
+      const partialsDir = this.partialsDir;
       content = content.replace(/<!--\s*include:partials\/([a-zA-Z0-9_\-.]+)\s*-->/g, (match, filename) => {
         try {
           const partialPath = path.resolve(partialsDir, filename);
@@ -287,7 +293,7 @@ export class CheckoutServer {
   }
 
   renderPayLinkHtml(token) {
-    const templatePath = path.join(moduleDirname, 'views', 'pay-link.html');
+    const templatePath = appFile('views/pay-link.html', 'apps/checkout-portal/src/views/pay-link.html');
     let html = fs.readFileSync(templatePath, 'utf8');
     return html.replace(/\{\{TOKEN\}\}/g, escapeHtml(token));
   }
@@ -344,9 +350,8 @@ export class CheckoutServer {
       // Official SDK script: GET /youpi.js or /sdk/youpi-checkout.js
       if (pathname === '/youpi.js' || pathname === '/sdk/youpi.js' || pathname === '/sdk/youpi-checkout.js') {
         try {
-          const resolvedSdkPath = fs.existsSync(path.join(moduleDirname, 'sdk', 'youpi.js'))
-            ? path.join(moduleDirname, 'sdk', 'youpi.js')
-            : this.sdkScriptPath;
+          const youpiSdk = appFile('sdk/youpi.js', 'apps/checkout-portal/src/sdk/youpi.js');
+          const resolvedSdkPath = fs.existsSync(youpiSdk) ? youpiSdk : this.sdkScriptPath;
           const sdkContent = fs.readFileSync(resolvedSdkPath, 'utf8');
           res.writeHead(200, {
             'Content-Type': 'application/javascript; charset=utf-8',
@@ -366,7 +371,7 @@ export class CheckoutServer {
       // Static icons: GET /icons/:filename with path traversal protection
       if (pathname.startsWith('/icons/')) {
         const iconName = path.basename(pathname);
-        const iconDir = path.resolve(moduleDirname, '..', 'public', 'icons');
+        const iconDir = path.join(this.publicDir, 'icons');
         const iconPath = path.resolve(iconDir, iconName);
         const relative = path.relative(iconDir, iconPath);
         const isSecure = relative && !relative.startsWith('..') && !path.isAbsolute(relative);
@@ -387,7 +392,7 @@ export class CheckoutServer {
       if (pathname.startsWith('/css/') || pathname.startsWith('/js/')) {
         const assetFolder = pathname.startsWith('/css/') ? 'css' : 'js';
         const assetName = path.basename(pathname);
-        const assetDir = path.resolve(moduleDirname, '..', 'public', assetFolder);
+        const assetDir = path.join(this.publicDir, assetFolder);
         const assetPath = path.resolve(assetDir, assetName);
 
         const relative = path.relative(assetDir, assetPath);
@@ -408,7 +413,7 @@ export class CheckoutServer {
 
       // Payment QR Stand (Smart Counter Stand View): GET /stand
       if (pathname === '/stand') {
-        const standHtmlPath = path.join(moduleDirname, 'views', 'stand.html');
+        const standHtmlPath = appFile('views/stand.html', 'apps/checkout-portal/src/views/stand.html');
         let template = fs.readFileSync(standHtmlPath, 'utf8');
 
         const businessName = url.searchParams.get('name') || process.env.DEFAULT_APP_NAME || 'Merchant Store';
