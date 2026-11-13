@@ -5,7 +5,12 @@
           <div id="paymentMethodSelectorBar" class="ypg-method-selector-bar" style="display:{{METHOD_SELECTOR_DISPLAY}};">
             <button type="button" class="ypg-method-tab active" id="tabMethodUpi" onclick="selectPaymentMethod('UPI')">
               <img src="/icons/upi.svg" alt="UPI" class="ypg-tab-icon" style="height:15px;" />
-              <span>UPI QR</span>
+              <span>UPI Apps</span>
+            </button>
+            <button type="button" class="ypg-method-tab" id="tabMethodBank" onclick="selectPaymentMethod('BANK_TRANSFER')"
+              style="display:none;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px; vertical-align:middle;"><path d="M3 21h18"/><path d="M3 10h18"/><path d="M5 6l7-3 7 3"/><path d="M4 10v11"/><path d="M20 10v11"/><path d="M8 14v3"/><path d="M12 14v3"/><path d="M16 14v3"/></svg>
+              <span>Bank Account</span>
             </button>
             <button type="button" class="ypg-method-tab" id="tabMethodCod" onclick="selectPaymentMethod('COD')"
               style="{{TAB_COD_STYLE}}">
@@ -45,6 +50,16 @@
                   <img class="ypg-pc-mini-icon" src="/icons/cred.png"
                     onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.cred" alt="CRED" />
                 </div>
+              </div>
+
+              <!-- Direct Bank Transfer (NEFT / IMPS / RTGS) -->
+              <div class="ypg-pc-method-card" id="pcMethodCardBank" onclick="selectPaymentMethod('BANK_TRANSFER')" style="display:none;">
+                <div class="ypg-pc-method-header">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px; vertical-align:middle; color:var(--ypg-hc-text-body, #475569);"><path d="M3 21h18"/><path d="M3 10h18"/><path d="M5 6l7-3 7 3"/><path d="M4 10v11"/><path d="M20 10v11"/><path d="M8 14v3"/><path d="M12 14v3"/><path d="M16 14v3"/></svg>
+                  <div class="ypg-pc-method-title">Bank Account</div>
+                  <span class="ypg-pc-cash-pill" style="background:#e0e7ff; color:#3730a3;">UPI / NEFT</span>
+                </div>
+                <div class="ypg-pc-method-sub">Pay to account — beneficiary prefilled in UPI</div>
               </div>
 
               <!-- Cash at Till Card (Offline Mode) -->
@@ -192,6 +207,109 @@
                     <div class="ypg-step-num">3</div>
                     <div>Payment is detected automatically, or tap <strong>Continue</strong> below after paying.</div>
                   </div>
+                </div>
+              </div>
+
+              <!-- VIEW BANK: DIRECT ACCOUNT TRANSFER (UPI-to-account + NEFT/IMPS) -->
+              <div id="viewBankTransferContent" hidden>
+                <div class="ypg-section-label-row" style="margin-top:0; margin-bottom:12px;">
+                  <h2 class="ypg-page-title" style="margin-bottom:0;">Pay to Bank Account</h2>
+                  <div class="ypg-countdown-pill" id="bankTimerBadge">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    <span id="bankTimerText">05:00</span>
+                  </div>
+                </div>
+
+                <div class="ypg-offers-pill" style="background:#eef2ff; border-color:#c7d2fe;">
+                  <div class="ypg-offers-left">
+                    <div class="ypg-offer-icon-badge" style="background:#4338ca; color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800;">₹</div>
+                    <span style="color:#3730a3; font-weight:700;">Beneficiary account prefilled</span>
+                  </div>
+                  <div class="ypg-offers-right">
+                    <span style="color:#4338ca;">UPI / NEFT / IMPS</span>
+                  </div>
+                </div>
+
+                <!-- Mobile-first: open UPI apps with account+IFSC beneficiary locked -->
+                <button type="button" class="ypg-btn-upi-mobile-intent ypg-btn-bank-account-intent" id="btnMobileBankAccountUpi" onclick="handleOpenBankAccountUpiIntent()">
+                  <img src="/icons/upi.svg" alt="UPI" style="height:14px; filter:brightness(0) invert(1);" />
+                  <span>Pay to Bank Account via UPI Apps</span>
+                </button>
+
+                <div class="ypg-upi-logos-row" style="justify-content:center; margin:10px 0 4px;">
+                  <div class="ypg-app-icon" title="Google Pay" role="button" tabindex="0" onclick="handleBankAccountUpiAppClick('Google Pay')"><img src="/icons/gpay.png" onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.gpay" alt="GPay" /></div>
+                  <div class="ypg-app-icon" title="PhonePe" role="button" tabindex="0" onclick="handleBankAccountUpiAppClick('PhonePe')"><img src="/icons/phonepe.png" onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.phonepe" alt="PhonePe" /></div>
+                  <div class="ypg-app-icon" title="Paytm" role="button" tabindex="0" onclick="handleBankAccountUpiAppClick('Paytm')"><img src="/icons/paytm.png" onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.paytm" alt="Paytm" /></div>
+                  <div class="ypg-app-icon" title="BHIM UPI" role="button" tabindex="0" onclick="handleBankAccountUpiAppClick('BHIM UPI')"><img src="/icons/bhim.png" onerror="if(window.FALLBACK_ICONS)this.src=window.FALLBACK_ICONS.bhim" alt="BHIM" /></div>
+                </div>
+                <div style="font-size:11.5px; color:var(--ypg-text-muted); text-align:center; line-height:1.4; margin-bottom:10px;">
+                  Opens your UPI app with MARKEX <strong>account + IFSC</strong> already set as the payee. Pay the exact amount shown.
+                </div>
+
+                <div id="bankAccountQrWrap" class="ypg-qr-card-container" style="margin:8px 0 12px;">
+                  <div class="ypg-qr-image-box" id="bankAccountQrContainer">
+                    <div style="font-size:11px; color:var(--ypg-hc-text-faint, #94a3b8); text-align:center;">Loading account QR...</div>
+                  </div>
+                  <div class="ypg-qr-details-col">
+                    <div class="ypg-qr-prompt-title">Or scan to pay this bank account</div>
+                    <div style="font-size:12px; color:var(--ypg-text-muted); line-height:1.4;">
+                      QR encodes NPCI account addressing so the beneficiary is filled automatically.
+                    </div>
+                  </div>
+                </div>
+
+                <div style="background:#ffffff; border:1px solid var(--ypg-border); border-radius:12px; padding:16px; margin:14px 0;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <span style="font-size:12px; color:var(--ypg-text-muted); font-weight:600;">Amount to Transfer</span>
+                    <strong style="font-size:20px; font-weight:800; color:var(--ypg-text-dark);">₹{{AMOUNT}}</strong>
+                  </div>
+                  <div style="border-top:1px dashed var(--ypg-border); padding-top:12px; display:flex; flex-direction:column; gap:10px;">
+                    <div>
+                      <div style="font-size:11px; color:var(--ypg-text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.4px;">Beneficiary Name</div>
+                      <div id="bankAccountName" style="font-size:14px; font-weight:700; color:var(--ypg-text-dark); margin-top:2px;">—</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end;">
+                      <div style="flex:1; min-width:0;">
+                        <div style="font-size:11px; color:var(--ypg-text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.4px;">Account Number</div>
+                        <div id="bankAccountNumber" style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:15px; font-weight:800; color:var(--ypg-text-dark); margin-top:2px; word-break:break-all;">—</div>
+                      </div>
+                      <button type="button" class="ypg-btn-expired-secondary" style="padding:6px 10px; font-size:11px; white-space:nowrap;" onclick="copyBankField('account')">Copy</button>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-end;">
+                      <div style="flex:1; min-width:0;">
+                        <div style="font-size:11px; color:var(--ypg-text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.4px;">IFSC</div>
+                        <div id="bankIfsc" style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:15px; font-weight:800; color:var(--ypg-text-dark); margin-top:2px;">—</div>
+                      </div>
+                      <button type="button" class="ypg-btn-expired-secondary" style="padding:6px 10px; font-size:11px; white-space:nowrap;" onclick="copyBankField('ifsc')">Copy</button>
+                    </div>
+                    <div id="bankNameRow" style="display:none;">
+                      <div style="font-size:11px; color:var(--ypg-text-muted); font-weight:600; text-transform:uppercase; letter-spacing:0.4px;">Bank</div>
+                      <div id="bankNameValue" style="font-size:13px; font-weight:600; color:var(--ypg-text-dark); margin-top:2px;">—</div>
+                    </div>
+                    <button type="button" class="ypg-btn-expired-secondary" style="width:100%; margin-top:4px;" onclick="copyBankField('beneficiary')">Copy full beneficiary details</button>
+                  </div>
+                </div>
+
+                <div class="ypg-instructions-card">
+                  <div class="ypg-instruction-step">
+                    <div class="ypg-step-num">1</div>
+                    <div><strong>Preferred on mobile:</strong> tap <strong>Pay to Bank Account via UPI Apps</strong> — beneficiary is added automatically.</div>
+                  </div>
+                  <div class="ypg-instruction-step">
+                    <div class="ypg-step-num">2</div>
+                    <div>Or use NEFT / IMPS with the account number + IFSC above for <strong>exactly ₹{{AMOUNT}}</strong>.</div>
+                  </div>
+                  <div class="ypg-instruction-step">
+                    <div class="ypg-step-num">3</div>
+                    <div>After paying, tap <strong>Continue</strong>. Status stays pending until MARKEX admin confirms the credit.</div>
+                  </div>
+                </div>
+
+                <div style="font-size:11.5px; color:var(--ypg-text-muted); line-height:1.45; margin-top:8px;" id="bankTransferInstructions">
+                  UPI apps open with account-level payee prefilled (NPCI account@IFSC). Some apps (e.g. PhonePe/Paytm) may block account+IFSC; use GPay/BHIM or NEFT/IMPS instead.
                 </div>
               </div>
 

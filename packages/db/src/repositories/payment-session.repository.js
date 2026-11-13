@@ -135,8 +135,12 @@ export class PaymentSessionRepository {
         // Slot is vacant! Grant ACTIVE slot.
         // Enforce the transition graph: a terminal or PROCESSING session must never be
         // revived to ACTIVE by a concurrent queue tick.
-        const currentStatus = this.findById(sessionId)?.status;
-        if (currentStatus && !isValidTransition(currentStatus, PaymentStatus.ACTIVE)) {
+        // Already-ACTIVE sessions (e.g. switching back from BANK_TRANSFER / COD) may
+        // re-bind to a vacant UPI receiving account without an ACTIVE→ACTIVE transition.
+        const current = this.findById(sessionId);
+        const currentStatus = current?.status;
+        const alreadyActive = currentStatus === PaymentStatus.ACTIVE;
+        if (currentStatus && !alreadyActive && !isValidTransition(currentStatus, PaymentStatus.ACTIVE)) {
           throw new Error(`Illegal payment state transition: cannot move from '${currentStatus}' to 'ACTIVE'.`);
         }
 
@@ -145,9 +149,9 @@ export class PaymentSessionRepository {
         try {
           this.db.execute(`
             UPDATE payment_sessions
-            SET status = ?, slot_acquired_at = ?, expires_at = ?, queue_position = 0, updated_at = ?
+            SET status = ?, receiving_account_id = ?, slot_acquired_at = ?, expires_at = ?, queue_position = 0, updated_at = ?
             WHERE id = ?
-          `, [PaymentStatus.ACTIVE, nowIso, expiresAt, nowIso, sessionId]);
+          `, [PaymentStatus.ACTIVE, receivingAccountId, nowIso, expiresAt, nowIso, sessionId]);
 
           // Mark receiving account as busy
           this.db.execute(`

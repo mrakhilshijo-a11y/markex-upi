@@ -3139,3 +3139,26 @@
         max-height: 170px !important;
       }
     }
+
+    .ypg-btn-bank-account-intent {
+      display: flex !important;
+      width: 100%;
+      margin: 12px 0 6px;
+      background: #1e3a5f !important;
+    }
+    .ypg-btn-bank-account-intent:active {
+      transform: scale(0.98);
+    }
+    @media (max-width: 767px) {
+      #paymentMethodSelectorBar {
+        display: flex !important;
+      }
+      #tabMethodUpi, #tabMethodBank {
+        flex: 1;
+        justify-content: center;
+      }
+      .ypg-btn-upi-mobile-intent,
+      .ypg-btn-bank-account-intent {
+        display: flex !important;
+      }
+    }

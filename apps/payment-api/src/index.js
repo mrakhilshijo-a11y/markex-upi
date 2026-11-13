@@ -29,8 +29,10 @@ import {
   ObservationRepository,
   SupportTicketRepository,
   AuditLogRepository,
-  DeviceRepository
+  DeviceRepository,
+  PaymentLinkRepository
 } from '@youpi/db';
+import { registerPaymentLinkRoutes } from './routes/payment-links.routes.js';
 import {
   QueueEngine,
   TimingEngine,
@@ -72,6 +74,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   const ticketRepo = new SupportTicketRepository(db);
   const auditRepo = new AuditLogRepository(db);
   const deviceRepo = new DeviceRepository(db);
+  const paymentLinkRepo = new PaymentLinkRepository(db);
 
   const eventEmitter = new EventEmitter();
 
@@ -426,6 +429,7 @@ export function createPaymentApp(customDb = null, options = {}) {
     obsRepo,
     ticketRepo,
     auditRepo,
+    paymentLinkRepo,
     queueEngine,
     timingEngine,
     attributionEngine,
@@ -447,6 +451,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   registerStatementRoutes(server, context);
   registerCustomerRoutes(server, context);
   registerDeviceRoutes(server, context);
+  registerPaymentLinkRoutes(server, context);
 
   function destroy() {
     clearInterval(queueSyncDaemon);

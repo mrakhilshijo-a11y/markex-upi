@@ -12,3 +12,5 @@ export * from './tunnel-command.js';
 export * from './state-machine.js';
 export * from './canary-policy.js';
 export * from './branding.js';
+export * from './markex-courses.js';
+export * from './payment-provider.js';

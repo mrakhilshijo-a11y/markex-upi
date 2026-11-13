@@ -34,6 +34,8 @@ export const VALID_TRANSITIONS = Object.freeze({
     // Observer match. Not a bank-statement confirmation.
     PaymentStatus.OBSERVED_SUCCESS,
     PaymentStatus.MANUAL_REVIEW,
+    // Admin bank confirmation (MARKEX manual verification / statement reconcile)
+    PaymentStatus.RECONCILED,
     // COD / cashier confirmation only. UPI alert code must not use SUCCESS.
     PaymentStatus.SUCCESS,
     PaymentStatus.FAILED,
@@ -43,6 +45,7 @@ export const VALID_TRANSITIONS = Object.freeze({
   [PaymentStatus.PROCESSING]: [
     PaymentStatus.OBSERVED_SUCCESS,
     PaymentStatus.MANUAL_REVIEW,
+    PaymentStatus.RECONCILED,
     PaymentStatus.SUCCESS,
     PaymentStatus.FAILED,
     PaymentStatus.EXPIRED
@@ -52,7 +55,10 @@ export const VALID_TRANSITIONS = Object.freeze({
     PaymentStatus.MANUAL_REVIEW
   ],
   [PaymentStatus.MANUAL_REVIEW]: [
-    PaymentStatus.RECONCILED
+    PaymentStatus.RECONCILED,
+    // Admin rejection after independent bank check (MARKEX manual verification)
+    PaymentStatus.FAILED,
+    PaymentStatus.CANCELLED
   ],
   [PaymentStatus.RECONCILED]: [],
   [PaymentStatus.SUCCESS]: [],

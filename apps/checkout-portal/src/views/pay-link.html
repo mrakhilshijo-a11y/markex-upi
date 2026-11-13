@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>MARKEX Trading Academy · Secure Payment</title>
+  <style>
+    :root {
+      --ink: #0b3d2e;
+      --ink-soft: #1a5c45;
+      --sand: #f4f7f5;
+      --line: #d5e5dc;
+      --danger: #b91c1c;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9efe4 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #e8f3ee 0%, transparent 50%),
+        linear-gradient(180deg, #eef6f1 0%, var(--sand) 40%, #e7efe9 100%);
+    }
+    .wrap {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 28px 18px 48px;
+    }
+    .brand {
+      text-align: center;
+      margin-bottom: 22px;
+    }
+    .brand .mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      font-size: 14px;
+    }
+    .brand h1 {
+      margin: 14px 0 4px;
+      font-size: 1.45rem;
+      letter-spacing: -0.02em;
+    }
+    .brand p {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 0.95rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px 20px;
+      box-shadow: 0 10px 30px rgba(11, 61, 46, 0.06);
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 14px 0 6px;
+    }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 16px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .course-box {
+      border: 1px solid var(--line);
+      background: #f7fbf9;
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+    }
+    .course-box .name { font-weight: 700; font-size: 1.05rem; }
+    .course-box .amt { font-size: 1.35rem; font-weight: 800; margin-top: 4px; }
+    .notice {
+      margin-top: 14px;
+      font-size: 12.5px;
+      line-height: 1.45;
+      color: #456557;
+      background: #f0f7f3;
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    button {
+      width: 100%;
+      margin-top: 18px;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 16px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error {
+      display: none;
+      margin-top: 12px;
+      color: var(--danger);
+      font-size: 14px;
+    }
+    .status-only {
+      text-align: center;
+      padding: 28px 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="mark">MX</div>
+      <h1>MARKEX Trading Academy</h1>
+      <p>Secure course payment</p>
+    </div>
+
+    <div class="card" id="payCard">
+      <div id="loadingState" class="status-only">Loading payment link…</div>
+      <div id="errorState" class="status-only" hidden></div>
+      <form id="payForm" hidden>
+        <div class="course-box">
+          <div class="name" id="courseName">—</div>
+          <div class="amt" id="courseAmount">—</div>
+        </div>
+
+        <label for="studentName">Student Name</label>
+        <input id="studentName" name="studentName" required maxlength="120" placeholder="Full name" />
+
+        <label for="studentMobile">Mobile Number</label>
+        <input id="studentMobile" name="studentMobile" required maxlength="10" inputmode="numeric" placeholder="10-digit mobile" />
+
+        <label for="studentEmail">Email (optional)</label>
+        <input id="studentEmail" name="studentEmail" type="email" maxlength="160" placeholder="student@email.com" />
+
+        <div class="notice">
+          Direct UPI payment. The merchant UPI ID may be visible on the QR or UPI app screen.
+          This is not a bank-approved hosted payment gateway. Success requires MARKEX admin bank verification.
+        </div>
+
+        <div class="error" id="formError"></div>
+        <button type="submit" id="payBtn">Continue to UPI Payment</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const TOKEN = "{{TOKEN}}";
+    const API_BASE = "";
+
+    async function loadLink() {
+      const res = await fetch(`${API_BASE}/api/v1/pay-links/${encodeURIComponent(TOKEN)}`);
+      const data = await res.json().catch(() => ({}));
+      document.getElementById('loadingState').hidden = true;
+      if (!res.ok) {
+        document.getElementById('errorState').hidden = false;
+        document.getElementById('errorState').textContent = data.message || data.error || 'Payment link unavailable.';
+        return;
+      }
+      document.getElementById('payForm').hidden = false;
+      document.getElementById('courseName').textContent = data.courseName;
+      document.getElementById('courseAmount').textContent = data.amountDisplay;
+      if (data.studentName) document.getElementById('studentName').value = data.studentName;
+      if (data.studentMobile) document.getElementById('studentMobile').value = data.studentMobile;
+      if (data.studentEmail) document.getElementById('studentEmail').value = data.studentEmail;
+    }
+
+    document.getElementById('payForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('formError');
+      err.style.display = 'none';
+      const btn = document.getElementById('payBtn');
+      btn.disabled = true;
+      btn.textContent = 'Opening checkout…';
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/pay-links/${encodeURIComponent(TOKEN)}/open`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentName: document.getElementById('studentName').value.trim(),
+            studentMobile: document.getElementById('studentMobile').value.replace(/\D/g, '').slice(-10),
+            studentEmail: document.getElementById('studentEmail').value.trim() || null
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || data.message || 'Could not open payment');
+        }
+        // Prefill guest bind via query so checkout can auto-bind
+        const q = new URLSearchParams({
+          guestName: data.studentName || '',
+          guestMobile: data.studentMobile || '',
+          guestEmail: data.studentEmail || ''
+        });
+        window.location.href = `${data.checkoutUrl}?${q.toString()}`;
+      } catch (ex) {
+        err.textContent = ex.message || 'Something went wrong';
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Continue to UPI Payment';
+      }
+    });
+
+    loadLink().catch(() => {
+      document.getElementById('loadingState').hidden = true;
+      document.getElementById('errorState').hidden = false;
+      document.getElementById('errorState').textContent = 'Could not load payment link.';
+    });
+  </script>
+</body>
+</html>

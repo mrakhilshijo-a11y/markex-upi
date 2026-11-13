@@ -1484,6 +1484,100 @@
         </div>
       </div>
 
+      <!-- SUB-VIEW: MARKEX TRADING ACADEMY -->
+      <div id="subViewOpsMarkex" hidden>
+        <div style="font-size:1.15rem; font-weight:800; color:var(--text-heading); margin-bottom:0.4rem;">
+          MARKEX Trading Academy
+        </div>
+        <p style="color:var(--text-muted); font-size:0.9rem; margin-bottom:1.25rem; max-width:52rem;">
+          Direct UPI course payments with guest checkout. Students may see the merchant UPI ID on QR/intent.
+          Student checkout may show UPI and bank-transfer details for payment. This admin screen does not need to re-display settlement credentials. Payments become successful only after you confirm against your bank statement.
+        </p>
+
+        <div class="kpi-row" style="margin-bottom:1.25rem;">
+          <div class="kpi-box"><div class="kpi-title">Total Collections</div><div class="kpi-value" id="mxTotalCollections">₹0</div></div>
+          <div class="kpi-box"><div class="kpi-title">Successful</div><div class="kpi-value" id="mxSuccessful" style="color:#059669;">0</div></div>
+          <div class="kpi-box"><div class="kpi-title">Pending Review</div><div class="kpi-value" id="mxPending" style="color:#d97706;">0</div></div>
+          <div class="kpi-box"><div class="kpi-title">Failed</div><div class="kpi-value" id="mxFailed" style="color:#dc2626;">0</div></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1.1fr 1fr; gap:1.25rem;">
+          <div class="card" style="margin:0;">
+            <div class="card-header"><div class="card-heading">Create Payment Link</div></div>
+            <div style="display:grid; gap:0.75rem;">
+              <div>
+                <label style="font-size:0.75rem; font-weight:700;">Course</label>
+                <select id="mxLinkCourse" style="width:100%; padding:0.55rem; border-radius:0.45rem; border:1px solid var(--border);">
+                  <option value="initial">Initial Course — ₹5,000</option>
+                  <option value="advanced">Advanced Course — ₹10,000</option>
+                  <option value="complete">Complete Course — ₹15,000</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:0.75rem; font-weight:700;">Student Name (optional)</label>
+                <input id="mxLinkName" type="text" style="width:100%; padding:0.55rem; border-radius:0.45rem; border:1px solid var(--border);" />
+              </div>
+              <div>
+                <label style="font-size:0.75rem; font-weight:700;">Student Mobile (optional)</label>
+                <input id="mxLinkMobile" type="text" maxlength="10" style="width:100%; padding:0.55rem; border-radius:0.45rem; border:1px solid var(--border);" />
+              </div>
+              <div>
+                <label style="font-size:0.75rem; font-weight:700;">Email (optional)</label>
+                <input id="mxLinkEmail" type="email" style="width:100%; padding:0.55rem; border-radius:0.45rem; border:1px solid var(--border);" />
+              </div>
+              <div>
+                <label style="font-size:0.75rem; font-weight:700;">Expires in (hours)</label>
+                <input id="mxLinkExpiry" type="number" value="72" min="0" style="width:100%; padding:0.55rem; border-radius:0.45rem; border:1px solid var(--border);" />
+              </div>
+              <button class="btn btn-success" onclick="createMarkexPaymentLink()">Generate Secure Link</button>
+              <div id="mxLinkResult" style="display:none; background:var(--bg-surface); border:1px solid var(--border); border-radius:0.5rem; padding:0.85rem;">
+                <div style="font-size:0.75rem; font-weight:700; margin-bottom:0.35rem;">Payment URL</div>
+                <code id="mxLinkUrl" style="word-break:break-all; font-size:0.8rem;"></code>
+                <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap;">
+                  <button class="btn btn-secondary" onclick="copyMarkexLink()">Copy Link</button>
+                  <a class="btn btn-secondary" id="mxWhatsAppShare" target="_blank" rel="noopener">Share via WhatsApp</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin:0;">
+            <div class="card-header">
+              <div class="card-heading">Pending Manual Verification</div>
+              <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="loadMarkexPendingReviews()">Refresh</button>
+            </div>
+            <div id="mxPendingList" style="display:grid; gap:0.75rem; max-height:420px; overflow:auto;"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.25rem;">
+          <div class="card-header">
+            <div class="card-heading">Payment Links</div>
+            <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="loadMarkexPaymentLinks()">Refresh</button>
+          </div>
+          <div style="overflow:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+              <thead>
+                <tr style="text-align:left; border-bottom:1px solid var(--border);">
+                  <th style="padding:0.5rem;">Student</th>
+                  <th style="padding:0.5rem;">Course</th>
+                  <th style="padding:0.5rem;">Amount</th>
+                  <th style="padding:0.5rem;">Status</th>
+                  <th style="padding:0.5rem;">Expires</th>
+                  <th style="padding:0.5rem;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="mxLinksTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:1.25rem;">
+          <div class="card-header"><div class="card-heading">Course-wise Collections</div></div>
+          <div id="mxCourseTotals" style="display:flex; gap:1rem; flex-wrap:wrap;"></div>
+        </div>
+      </div>
+
       <!-- SUB-VIEW 1.4: PAYMENT OBSERVERS LIVE STATUS -->
       <div id="subViewOpsObservers" hidden>
         <div
@@ -4107,6 +4201,7 @@
       if (sectionId === 'operations') {
         items = [
           { id: 'subViewOpsLive', label: '📊 Live Monitor & Slots', viewId: 'subViewOpsLive' },
+          { id: 'subViewOpsMarkex', label: '🎓 MARKEX Academy', viewId: 'subViewOpsMarkex' },
           { id: 'subViewOpsCounter', label: '🏪 Counter Desk (POS Cashier)', viewId: 'subViewOpsCounter' },
           { id: 'subViewOpsTransactions', label: '💳 Transactions Ledger', viewId: 'subViewOpsTransactions' },
           { id: 'subViewOpsObservers', label: '📡 Payment Observers Status', viewId: 'subViewOpsObservers' }
@@ -4177,6 +4272,11 @@
       }
       if (subViewId === 'subViewOpsTransactions') fetchPaymentsLedger();
       if (subViewId === 'subViewOpsObservers') fetchObserversStatus();
+      if (subViewId === 'subViewOpsMarkex') {
+        refreshMarkexDashboard();
+        loadMarkexPaymentLinks();
+        loadMarkexPendingReviews();
+      }
       if (subViewId === 'subViewDevAndroid') {
         fetchObserversStatus();
         fetchSmsPairQr();
@@ -8060,6 +8160,190 @@
       if (val) {
         navigator.clipboard?.writeText(val);
         showAdminToast('Script snippet copied to clipboard!', true);
+      }
+    }
+
+    // --- MARKEX TRADING ACADEMY ---
+    let lastMarkexLinkUrl = '';
+    let lastMarkexWhatsAppText = '';
+
+    async function refreshMarkexDashboard() {
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/markex/dashboard`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Dashboard failed');
+        document.getElementById('mxTotalCollections').textContent = data.totalCollectionsDisplay || '₹0';
+        document.getElementById('mxSuccessful').textContent = String(data.successfulPayments || 0);
+        document.getElementById('mxPending').textContent = String(data.pendingPayments || 0);
+        document.getElementById('mxFailed').textContent = String(data.failedPayments || 0);
+        const box = document.getElementById('mxCourseTotals');
+        box.innerHTML = '';
+        (data.courseWiseCollections || []).forEach((c) => {
+          const el = document.createElement('div');
+          el.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:0.5rem;padding:0.75rem 1rem;min-width:140px;';
+          el.innerHTML = `<div style="font-size:0.75rem;color:var(--text-muted);font-weight:700;">${escapeHtml(c.courseId)}</div>
+            <div style="font-size:1.1rem;font-weight:800;">${escapeHtml(c.collectionsDisplay || '₹0')}</div>
+            <div style="font-size:0.8rem;color:var(--text-muted);">${c.count || 0} paid</div>`;
+          box.appendChild(el);
+        });
+      } catch (err) {
+        showAdminToast(err.message || 'Could not load MARKEX dashboard', false);
+      }
+    }
+
+    async function createMarkexPaymentLink() {
+      try {
+        const body = {
+          courseId: document.getElementById('mxLinkCourse').value,
+          studentName: document.getElementById('mxLinkName').value.trim() || null,
+          studentMobile: document.getElementById('mxLinkMobile').value.replace(/\D/g, '').slice(-10) || null,
+          studentEmail: document.getElementById('mxLinkEmail').value.trim() || null,
+          expiresInHours: Number(document.getElementById('mxLinkExpiry').value || 72),
+          createdBy: 'admin'
+        };
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payment-links`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not create link');
+        lastMarkexLinkUrl = data.link.url;
+        lastMarkexWhatsAppText = data.whatsappShareText || data.link.url;
+        document.getElementById('mxLinkResult').style.display = 'block';
+        document.getElementById('mxLinkUrl').textContent = data.link.url;
+        document.getElementById('mxWhatsAppShare').href = `https://wa.me/?text=${encodeURIComponent(lastMarkexWhatsAppText)}`;
+        showAdminToast('Payment link created', true);
+        loadMarkexPaymentLinks();
+        refreshMarkexDashboard();
+      } catch (err) {
+        showAdminToast(err.message || 'Link creation failed', false);
+      }
+    }
+
+    function copyMarkexLink() {
+      if (!lastMarkexLinkUrl) return;
+      navigator.clipboard?.writeText(lastMarkexLinkUrl);
+      showAdminToast('Payment link copied', true);
+    }
+
+    async function loadMarkexPaymentLinks() {
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payment-links?limit=100`);
+        const data = await res.json();
+        const tbody = document.getElementById('mxLinksTableBody');
+        tbody.innerHTML = '';
+        (data.links || []).forEach((link) => {
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid var(--border)';
+          const canRevoke = link.status === 'ACTIVE' || link.status === 'USED' || link.status === 'EXPIRED';
+          tr.innerHTML = `
+            <td style="padding:0.5rem;">${escapeHtml(link.studentName || '—')}<div style="color:var(--text-muted);font-size:0.75rem;">${escapeHtml(link.studentMobile || '')}</div></td>
+            <td style="padding:0.5rem;">${escapeHtml(link.courseName)}</td>
+            <td style="padding:0.5rem;">${escapeHtml(link.amountDisplay)}</td>
+            <td style="padding:0.5rem;"><span class="badge">${escapeHtml(link.status)}</span></td>
+            <td style="padding:0.5rem;">${link.expiresAt ? escapeHtml(new Date(link.expiresAt).toLocaleString()) : '—'}</td>
+            <td style="padding:0.5rem; display:flex; gap:0.35rem; flex-wrap:wrap;">
+              <button class="btn btn-secondary" style="font-size:0.7rem;padding:0.2rem 0.45rem;" onclick="navigator.clipboard.writeText('${link.url.replace(/'/g, "\\'")}');showAdminToast('Copied',true)">Copy</button>
+              ${canRevoke && link.status !== 'PAID' && link.status !== 'REVOKED' ? `<button class="btn btn-secondary" style="font-size:0.7rem;padding:0.2rem 0.45rem;" onclick="revokeMarkexLink('${link.id}')">Revoke</button>` : ''}
+            </td>`;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        showAdminToast(err.message || 'Could not load links', false);
+      }
+    }
+
+    async function revokeMarkexLink(id) {
+      if (!confirm('Revoke this payment link?')) return;
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payment-links/${encodeURIComponent(id)}/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actorId: 'admin' })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Revoke failed');
+        showAdminToast('Link revoked', true);
+        loadMarkexPaymentLinks();
+      } catch (err) {
+        showAdminToast(err.message || 'Revoke failed', false);
+      }
+    }
+
+    async function loadMarkexPendingReviews() {
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payments?limit=100`);
+        const data = await res.json();
+        const list = document.getElementById('mxPendingList');
+        list.innerHTML = '';
+        const payments = data.payments || data.items || data || [];
+        const pending = (Array.isArray(payments) ? payments : []).filter((p) =>
+          ['MANUAL_REVIEW', 'OBSERVED_SUCCESS', 'PROCESSING', 'ACTIVE'].includes(p.status)
+          && (p.metadata?.markex || p.metadata?.markexManualVerification || p.orderId?.startsWith('MARKEX-') || p.status === 'MANUAL_REVIEW')
+        );
+        if (!pending.length) {
+          list.innerHTML = '<div style="color:var(--text-muted);font-size:0.9rem;">No payments awaiting admin confirmation.</div>';
+          return;
+        }
+        pending.forEach((p) => {
+          const el = document.createElement('div');
+          el.style.cssText = 'border:1px solid var(--border);border-radius:0.5rem;padding:0.75rem;';
+          const meta = p.metadata || {};
+          el.innerHTML = `
+            <div style="font-weight:700;">${escapeHtml(meta.studentName || p.customerName || 'Student')} · ${escapeHtml(meta.courseName || p.orderId || '')}</div>
+            <div style="font-size:0.85rem;color:var(--text-muted);margin:0.25rem 0;">₹${escapeHtml(String(p.amount || (Number(p.amountPaise || 0) / 100).toFixed(2)))} · ${escapeHtml(p.status)} · UTR: ${escapeHtml(p.customerUtr || '—')}</div>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.5rem;">
+              <input id="utr_${p.id || p.paymentId}" placeholder="Bank UTR / ref" style="flex:1;min-width:120px;padding:0.35rem 0.5rem;border:1px solid var(--border);border-radius:0.35rem;" value="${escapeHtml(p.customerUtr || '')}" />
+              <button class="btn btn-success" style="font-size:0.75rem;" onclick="confirmMarkexPayment('${p.id || p.paymentId}')">Confirm</button>
+              <button class="btn btn-secondary" style="font-size:0.75rem;" onclick="rejectMarkexPayment('${p.id || p.paymentId}')">Reject</button>
+            </div>`;
+          list.appendChild(el);
+        });
+      } catch (err) {
+        showAdminToast(err.message || 'Could not load pending reviews', false);
+      }
+    }
+
+    async function confirmMarkexPayment(paymentId) {
+      const utrEl = document.getElementById(`utr_${paymentId}`);
+      const bankReference = utrEl ? utrEl.value.trim() : '';
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payments/${encodeURIComponent(paymentId)}/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operatorId: 'admin',
+            notes: 'Confirmed after independent MARKEX bank account check',
+            bankReference: bankReference || undefined
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Confirm failed');
+        showAdminToast('Payment confirmed', true);
+        loadMarkexPendingReviews();
+        refreshMarkexDashboard();
+        loadMarkexPaymentLinks();
+      } catch (err) {
+        showAdminToast(err.message || 'Confirm failed', false);
+      }
+    }
+
+    async function rejectMarkexPayment(paymentId) {
+      const reason = prompt('Rejection reason (shown in audit log):', 'No matching bank credit found') || 'Rejected by admin';
+      try {
+        const res = await authedFetch(`${API_BASE}/api/v1/admin/payments/${encodeURIComponent(paymentId)}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ operatorId: 'admin', reason })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Reject failed');
+        showAdminToast('Payment rejected', true);
+        loadMarkexPendingReviews();
+        refreshMarkexDashboard();
+      } catch (err) {
+        showAdminToast(err.message || 'Reject failed', false);
       }
     }
 

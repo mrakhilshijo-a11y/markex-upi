@@ -973,6 +973,8 @@
 
     function hideAllContent() {
       document.getElementById('viewUpiContent').hidden = true;
+      const vBank = document.getElementById('viewBankTransferContent');
+      if (vBank) vBank.hidden = true;
       const vCod = document.getElementById('viewCodContent');
       if (vCod) vCod.hidden = true;
       const vCash = document.getElementById('viewCashContent');
@@ -1036,6 +1038,99 @@
       }, 1000);
     }
 
+
+    function getBankTransferUpiUri() {
+      const raw = state?.bankTransferUpiUri
+        || state?.bankTransfer?.bankTransferUpiUri
+        || null;
+      if (typeof raw !== 'string') return null;
+      const trimmed = raw.trim();
+      if (!trimmed.toLowerCase().startsWith('upi://pay?')) return null;
+      return trimmed;
+    }
+
+    async function loadBankAccountQr() {
+      const box = document.getElementById('bankAccountQrContainer');
+      if (!box) return;
+      try {
+        const res = await fetch(`/checkout/${PAYMENT_ID}/qr.svg?rail=bank`, { cache: 'no-store' });
+        if (res.ok) {
+          const svg = await res.text();
+          if (svg && svg.includes('<svg')) { box.innerHTML = svg; return; }
+        }
+      } catch (e) {}
+      box.innerHTML = '<div style="font-size:11px;color:var(--ypg-text-muted);text-align:center;">Use Pay to Bank Account via UPI Apps</div>';
+    }
+
+    function handleOpenBankAccountUpiIntent() {
+      const uri = getBankTransferUpiUri();
+      if (!uri) return;
+      try { window.location.assign(uri); } catch (err) { console.warn(err); }
+    }
+
+    function handleBankAccountUpiAppClick(appName) {
+      if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 767) {
+        handleOpenBankAccountUpiIntent();
+      }
+    }
+
+    function renderBankTransferDetails(data) {
+      const bt = (data && data.bankTransfer) || (state && state.bankTransfer) || null;
+      const nameEl = document.getElementById('bankAccountName');
+      const accEl = document.getElementById('bankAccountNumber');
+      const ifscEl = document.getElementById('bankIfsc');
+      const bankRow = document.getElementById('bankNameRow');
+      const bankVal = document.getElementById('bankNameValue');
+      const instr = document.getElementById('bankTransferInstructions');
+      if (!bt) return;
+      if (data && data.bankTransferUpiUri) {
+        state = state || {};
+        state.bankTransferUpiUri = data.bankTransferUpiUri;
+      } else if (bt.bankTransferUpiUri) {
+        state = state || {};
+        state.bankTransferUpiUri = bt.bankTransferUpiUri;
+      }
+      if (nameEl) nameEl.textContent = bt.accountName || 'MARKEX TRADING ACADEMY';
+      if (accEl) accEl.textContent = bt.accountNumber || '—';
+      if (ifscEl) ifscEl.textContent = bt.ifsc || '—';
+      if (bt.bankName && bankRow && bankVal) {
+        bankRow.style.display = 'block';
+        bankVal.textContent = bt.bankName;
+      }
+      if (instr && bt.instructions) instr.textContent = bt.instructions;
+      loadBankAccountQr();
+    }
+
+    function copyBankField(kind) {
+      const bt = (state && state.bankTransfer) || null;
+      if (!bt) return;
+      let value;
+      if (kind === 'ifsc') value = bt.ifsc;
+      else if (kind === 'beneficiary') {
+        value = [
+          `Beneficiary: ${bt.accountName || 'MARKEX TRADING ACADEMY'}`,
+          `Account: ${bt.accountNumber || ''}`,
+          `IFSC: ${bt.ifsc || ''}`,
+          bt.bankName ? `Bank: ${bt.bankName}` : '',
+          bt.accountUpiVpa ? `UPI payee: ${bt.accountUpiVpa}` : ''
+        ].filter(Boolean).join('\n');
+      } else value = bt.accountNumber;
+      if (!value) return;
+      const done = () => {
+        try { if (typeof showToast === 'function') showToast(kind === 'ifsc' ? 'IFSC copied' : (kind === 'beneficiary' ? 'Beneficiary details copied' : 'Account number copied')); } catch (e) {}
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(String(value)).then(done).catch(() => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = String(value);
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    }
+
     function renderMethodSelectorBar(data) {
       const bar = document.getElementById('paymentMethodSelectorBar');
       const sellingMode = data.sellingMode || 'ONLINE';
@@ -1065,6 +1160,7 @@
       }
 
       const tabUpi = document.getElementById('tabMethodUpi');
+      const tabBank = document.getElementById('tabMethodBank');
       const tabCod = document.getElementById('tabMethodCod');
       const tabCash = document.getElementById('tabMethodCash');
       const tabCard = document.getElementById('tabMethodCard');
@@ -1072,11 +1168,20 @@
       if (tabUpi) tabUpi.style.display = 'inline-flex';
 
       const pcUpi = document.getElementById('pcMethodCardUpi');
+      const pcBank = document.getElementById('pcMethodCardBank');
       const pcCod = document.getElementById('pcMethodCardCod');
       const pcCash = document.getElementById('pcMethodCardCash');
       const pcCard = document.getElementById('pcMethodCardCard');
 
       if (pcUpi) pcUpi.style.display = 'block';
+      const bankEnabled = enabledMethods.includes('BANK_TRANSFER');
+      if (tabBank) tabBank.style.display = bankEnabled ? 'inline-flex' : 'none';
+      if (pcBank) pcBank.style.display = bankEnabled ? 'block' : 'none';
+      if (data && data.bankTransfer) {
+        state = state || {};
+        state.bankTransfer = data.bankTransfer;
+        renderBankTransferDetails(data);
+      }
 
       if (sellingMode === 'ONLINE') {
         // Online Selling Mode:
@@ -1112,6 +1217,7 @@
     function updateMethodTabsUI(method) {
       const tabs = [
         { id: 'tabMethodUpi', method: 'UPI' },
+        { id: 'tabMethodBank', method: 'BANK_TRANSFER' },
         { id: 'tabMethodCod', method: 'COD' },
         { id: 'tabMethodCash', method: 'CASH_COUNTER' },
         { id: 'tabMethodCard', method: 'CARD_COUNTER' }
@@ -1128,6 +1234,7 @@
 
       const pcCards = [
         { id: 'pcMethodCardUpi', method: 'UPI' },
+        { id: 'pcMethodCardBank', method: 'BANK_TRANSFER' },
         { id: 'pcMethodCardCod', method: 'COD' },
         { id: 'pcMethodCardCash', method: 'CASH_COUNTER' },
         { id: 'pcMethodCardCard', method: 'CARD_COUNTER' }
@@ -1146,7 +1253,9 @@
     function switchMethodFromDowntime() {
       const enabled = state?.enabledMethods || state?.branding?.enabledPaymentMethods || [];
       const sellingMode = state?.sellingMode || state?.branding?.sellingMode || 'OFFLINE';
-      if (sellingMode === 'ONLINE' && enabled.includes('COD')) {
+      if (enabled.includes('BANK_TRANSFER')) {
+        selectPaymentMethod('BANK_TRANSFER');
+      } else if (sellingMode === 'ONLINE' && enabled.includes('COD')) {
         selectPaymentMethod('COD');
       } else if (enabled.includes('CASH_COUNTER')) {
         selectPaymentMethod('CASH_COUNTER');
@@ -1160,6 +1269,11 @@
 
       if (method === 'UPI') {
         document.getElementById('viewUpiContent').hidden = false;
+        document.getElementById('ypgStickyFooter').style.display = 'flex';
+      } else if (method === 'BANK_TRANSFER') {
+        const vBank = document.getElementById('viewBankTransferContent');
+        if (vBank) vBank.hidden = false;
+        renderBankTransferDetails(state);
         document.getElementById('ypgStickyFooter').style.display = 'flex';
       } else if (method === 'COD') {
         const vCod = document.getElementById('viewCodContent');
@@ -1191,12 +1305,26 @@
             state.status = resData.status;
           }
 
+          if (resData.bankTransfer) {
+            state.bankTransfer = resData.bankTransfer;
+            renderBankTransferDetails(resData);
+          }
           if (method === 'COD') {
             runCountdown(resData.timeRemainingSeconds || 300, sec => {
               const el = document.getElementById('codTimerText');
               if (el) el.textContent = formatTime(sec);
             }, () => {
               const el = document.getElementById('codTimerText');
+              if (el) el.textContent = 'Expired';
+              fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/expire`, { method: 'POST' }).catch(() => { });
+              loadState();
+            });
+          } else if (method === 'BANK_TRANSFER') {
+            runCountdown(resData.timeRemainingSeconds || 300, sec => {
+              const el = document.getElementById('bankTimerText');
+              if (el) el.textContent = formatTime(sec);
+            }, () => {
+              const el = document.getElementById('bankTimerText');
               if (el) el.textContent = 'Expired';
               fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/expire`, { method: 'POST' }).catch(() => { });
               loadState();
@@ -1552,8 +1680,8 @@
     function renderState(data) {
       state = data;
       const b = data.branding || {};
-      const appName = (b.appName && b.appName !== 'YOUPI PG') ? b.appName : 'Mitto Pay';
-      const merchantName = (data.merchantName && data.merchantName !== 'YOUPI Demo Store' && data.merchantName !== 'Merchant Checkout') ? data.merchantName : 'V-Visa Business';
+      const appName = (b.appName && b.appName !== 'YOUPI PG') ? b.appName : 'MARKEX';
+      const merchantName = (data.merchantName && data.merchantName !== 'YOUPI Demo Store' && data.merchantName !== 'Merchant Checkout') ? data.merchantName : 'MARKEX TRADING ACADEMY';
 
       // 1. Dynamic Title
       document.title = `${merchantName} · ${appName} Checkout`;
@@ -1795,7 +1923,7 @@
         if (splashDefaultShield) splashDefaultShield.style.display = 'none';
       }
       if (splashSecuredText) {
-        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || '256-Bit Bank Encryption') : (b.appName || 'Mitto Pay');
+        splashSecuredText.textContent = b.hidePoweredBy ? (b.appName || '256-Bit Bank Encryption') : (b.appName || 'MARKEX');
       }
 
       // 12. Legal Disclaimer Strip
@@ -2304,7 +2432,7 @@
     }
 
     // --- RAZORPAY AUTHENTIC "PROCESSING YOUR PAYMENT" MODAL SHEET ---
-    function openProcessingModal(title = 'Processing payment securely with Mitto Pay', subtitle = 'Bank verification in progress. Please do not close or refresh this window.') {
+    function openProcessingModal(title = 'Processing payment securely with MARKEX', subtitle = 'Awaiting admin bank verification. Please do not close or refresh this window.') {
       const modal = document.getElementById('rzpProcessingModal');
       const tEl = document.getElementById('rzpProcessingTitle');
       const sEl = document.getElementById('rzpProcessingSubtitle');
@@ -2410,7 +2538,7 @@
 
     // --- MANUAL PAYMENT DONE VERIFICATION ---
     async function submitPaymentDone() {
-      openProcessingModal('Processing payment securely with Mitto Pay', 'Bank verification in progress. Please do not close or refresh this window.');
+      openProcessingModal('Processing payment securely with MARKEX', 'Awaiting admin bank verification. Please do not close or refresh this window.');
       emitTriggerHook('PAYMENT_DONE_CLICKED');
 
       try {

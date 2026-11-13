@@ -13,6 +13,25 @@ export function isValidVpa(vpa) {
 }
 
 /**
+ * NPCI account + IFSC addressing used by UPI apps to prefill a bank beneficiary.
+ * Format: {accountNumber}@{IFSC}.ifsc.npci
+ * @param {string} accountNumber
+ * @param {string} ifsc
+ * @returns {string}
+ */
+export function buildAccountIfscVpa(accountNumber, ifsc) {
+  const acct = String(accountNumber || '').replace(/\s+/g, '').trim();
+  const code = String(ifsc || '').replace(/\s+/g, '').trim().toUpperCase();
+  if (!/^\d{9,18}$/.test(acct)) {
+    throw new Error('Invalid bank account number for UPI account addressing');
+  }
+  if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(code)) {
+    throw new Error('Invalid IFSC for UPI account addressing');
+  }
+  return `${acct}@${code}.ifsc.npci`;
+}
+
+/**
  * Builds a canonical upi://pay URI dynamically from server-validated parameters.
  * Amount is derived exclusively from server-side integer paise.
  * @param {{

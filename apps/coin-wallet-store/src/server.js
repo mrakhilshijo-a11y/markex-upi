@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { YoupiPaymentClient } from '@youpi/merchant-sdk';
-import { getCoinStoreWebhookSecret } from '@youpi/common';
+import { getCoinStoreWebhookSecret, resolveCourseAmount, listMarkexCourses, formatInrFromPaise } from '@youpi/common';
+import crypto from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -139,6 +140,7 @@ export class CoinWalletStoreServer {
     this.transactionHistory = this.loadClaimHistory();
 
     this.storeHtml = fs.readFileSync(path.join(__dirname, 'store.html'), 'utf8');
+    this.markexHtml = fs.readFileSync(path.join(__dirname, 'markex-academy.html'), 'utf8');
     this.walletHtml = fs.readFileSync(path.join(__dirname, 'wallet.html'), 'utf8');
     this.orderSuccessHtml = fs.readFileSync(path.join(__dirname, 'order-success.html'), 'utf8');
     this.orderFailedHtml = fs.readFileSync(path.join(__dirname, 'order-failed.html'), 'utf8');
@@ -393,9 +395,9 @@ export class CoinWalletStoreServer {
         }
       }
 
-      // GET / or /store
-      if ((pathname === '/' || pathname === '/store') && (method === 'GET' || method === 'HEAD')) {
-        try { this.storeHtml = fs.readFileSync(path.join(__dirname, 'store.html'), 'utf8'); } catch {}
+      // MARKEX academy home (replaces demo coin store on /)
+      if ((pathname === '/' || pathname === '/academy' || pathname === '/store') && (method === 'GET' || method === 'HEAD')) {
+        try { this.markexHtml = fs.readFileSync(path.join(__dirname, 'markex-academy.html'), 'utf8'); } catch {}
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
@@ -404,12 +406,110 @@ export class CoinWalletStoreServer {
           ...BASE_SECURITY_HEADERS
         });
         if (method === 'HEAD') { res.end(); return; }
+        res.end(this.markexHtml);
+        return;
+      }
+
+      // Legacy demo coin store
+      if ((pathname === '/demo-store' || pathname === '/coins') && (method === 'GET' || method === 'HEAD')) {
+        try { this.storeHtml = fs.readFileSync(path.join(__dirname, 'store.html'), 'utf8'); } catch {}
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          ...BASE_SECURITY_HEADERS
+        });
+        if (method === 'HEAD') { res.end(); return; }
         res.end(this.storeHtml);
         return;
       }
 
+      if (pathname === '/api/markex/courses' && method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ courses: listMarkexCourses(), currency: 'INR' }));
+        return;
+      }
+
+      if (pathname === '/api/markex/checkout' && method === 'POST') {
+        let body = '';
+        let bodyTooLarge = false;
+        req.on('data', chunk => {
+          if (bodyTooLarge) return;
+          body += chunk;
+          if (body.length > MAX_JSON_BODY_BYTES) { bodyTooLarge = true; body = ''; }
+        });
+        req.on('end', async () => {
+          if (bodyTooLarge) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Request body too large' }));
+            return;
+          }
+          try {
+            const data = JSON.parse(body || '{}');
+            const { course, amountPaise } = resolveCourseAmount(String(data.courseId || ''));
+            const studentName = String(data.studentName || '').trim();
+            const studentMobile = String(data.studentMobile || '').replace(/\D/g, '').slice(-10);
+            const studentEmail = String(data.studentEmail || '').trim() || null;
+            if (studentName.length < 2 || !/^\d{10}$/.test(studentMobile)) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Valid student name and 10-digit mobile are required.' }));
+              return;
+            }
+            // Never trust browser amount
+            if (data.amountPaise != null && Number(data.amountPaise) !== amountPaise) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Amount mismatch. Course price is server-controlled.' }));
+              return;
+            }
+
+            const orderId = `MARKEX-${course.id.toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+            const amountStr = (amountPaise / 100).toFixed(2);
+            const returnUrl = `${this.publicBaseUrl}/order-success?order_id=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(amountStr)}`;
+
+            const payment = await this.paymentClient.createPayment({
+              orderId,
+              amount: amountStr,
+              currency: 'INR',
+              returnUrl,
+              metadata: {
+                markex: true,
+                markexManualVerification: true,
+                verificationMode: 'manual',
+                provider: 'direct_upi',
+                courseId: course.id,
+                courseName: course.name,
+                studentName,
+                studentMobile,
+                studentEmail,
+                guestCheckout: true
+              }
+            });
+
+            let resolvedCheckoutUrl = payment.checkoutUrl;
+            const checkoutBase = process.env.BASE_CHECKOUT_URL || 'http://localhost:7000';
+            if (this.publicBaseUrl.includes('localhost') || this.publicBaseUrl.includes('127.0.0.1')) {
+              resolvedCheckoutUrl = `${checkoutBase}/checkout/${payment.paymentId}`;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+            res.end(JSON.stringify({
+              orderId,
+              paymentId: payment.paymentId,
+              checkoutUrl: resolvedCheckoutUrl,
+              amountPaise,
+              amountDisplay: formatInrFromPaise(amountPaise),
+              courseId: course.id,
+              courseName: course.name
+            }));
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message || 'Unable to create course payment' }));
+          }
+        });
+        return;
+      }
+
       // GET /wallet
-      if (pathname === '/wallet' && (method === 'GET' || method === 'HEAD')) {
+      if ((pathname === '/wallet') && (method === 'GET' || method === 'HEAD')) {
         try { this.walletHtml = fs.readFileSync(path.join(__dirname, 'wallet.html'), 'utf8'); } catch {}
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',

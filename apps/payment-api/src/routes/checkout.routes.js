@@ -1,5 +1,5 @@
 import { HttpServer } from '../server.js';
-import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition, getObserverToken } from '@youpi/common';
+import { toRupeesString, buildUpiUri, PaymentStatus, PaymentMethod, UPI_PROVIDERS, isInternalServiceRequest, isValidTransition, getObserverToken, isManualVerificationMode, resolveCheckoutBankTransfer, buildBankTransferUpiUri, AuditActorType } from '@youpi/common';
 import { validateSessionDeviceAccess, verifyRegisteredDeviceCredentials } from '@youpi/core';
 import { isAdminRequest, isPaymentOwner } from '../auth-guard.js';
 
@@ -170,6 +170,11 @@ function sanitizePublicBranding(raw = {}) {
  * Recovery: the next create succeeds once a heartbeat is fresh. In-flight sessions are not cancelled.
  */
 export function observerHealthEnforced() {
+  // Manual bank-confirmation mode does not depend on SMS/Gmail observers.
+  if (String(process.env.PAYMENT_VERIFICATION_MODE || 'manual').toLowerCase() === 'manual') {
+    if (process.env.YOUPI_ENFORCE_OBSERVER_HEALTH === 'true') return true;
+    return false;
+  }
   if (process.env.YOUPI_ENFORCE_OBSERVER_HEALTH === 'true') return true;
   if (process.env.NODE_ENV === 'test') return false;
   return true;
@@ -183,6 +188,31 @@ export function upiObserversAcceptingPayments(health) {
  * Healthy (WORKING) only when both Gmail and an SMS observer are up.
  * New UPI payments additionally require smsHealthy. Gmail alone does not accept new sessions.
  */
+/**
+ * Resolve enabled checkout methods for a merchant.
+ * BANK_TRANSFER appears when configured in branding (or by default when bank env is set).
+ */
+export function resolveEnabledPaymentMethods(merchantBranding = {}, sellingMode = 'ONLINE') {
+  const bank = resolveCheckoutBankTransfer(process.env);
+  const bankReady = Boolean(bank?.accountNumber && bank?.ifsc);
+  const defaultOnline = bankReady ? ['UPI', 'BANK_TRANSFER'] : ['UPI'];
+  const defaultOffline = ['UPI', 'CASH_COUNTER', 'CARD_COUNTER'];
+  const rawEnabled = Array.isArray(merchantBranding.enabledPaymentMethods)
+    ? merchantBranding.enabledPaymentMethods
+    : (sellingMode === 'ONLINE' ? defaultOnline : defaultOffline);
+
+  const enabledMethods = ['UPI'];
+  if (sellingMode === 'ONLINE') {
+    if (rawEnabled.includes('COD')) enabledMethods.push('COD');
+    if (rawEnabled.includes('BANK_TRANSFER') && bankReady) enabledMethods.push('BANK_TRANSFER');
+  } else {
+    if (rawEnabled.includes('CASH_COUNTER')) enabledMethods.push('CASH_COUNTER');
+    if (rawEnabled.includes('CARD_COUNTER')) enabledMethods.push('CARD_COUNTER');
+    if (rawEnabled.includes('BANK_TRANSFER') && bankReady) enabledMethods.push('BANK_TRANSFER');
+  }
+  return enabledMethods;
+}
+
 export async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode = 'OFFLINE', merchantId = '00000000-0000-0000-0000-000000000001') {
   // 0. Check False Narrative Dev Switch (Active for 10 minutes from enabling time)
   const productionLock = process.env.NODE_ENV === 'production' || process.env.YOUPI_MODE === 'production';
@@ -240,6 +270,23 @@ export async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode
       }
     }
   } catch (err) {}
+
+  // Manual admin-confirm mode does not require SMS/Gmail observers for UPI QR / bank transfer.
+  // Avoid false "Server Facing Issues" when MARKEX runs without observer hardware.
+  if (isManualVerificationMode(process.env) && process.env.YOUPI_ENFORCE_OBSERVER_HEALTH !== 'true') {
+    return {
+      status: 'WORKING',
+      tier: 'GREEN',
+      label: 'Server Is Working',
+      isWorking: true,
+      reason: 'Manual verification mode: UPI QR and bank transfer instructions are active; admin confirms bank credit',
+      smsHealthy: true,
+      gmailHealthy: true,
+      warning: null,
+      recommendedAlternative: null,
+      verificationMode: 'manual'
+    };
+  }
 
   let smsHealthy = false;
   let gmailHealthy = false;
@@ -464,6 +511,14 @@ export function registerCheckoutRoutes(server, ctx) {
     if ([PaymentStatus.SUCCESS, PaymentStatus.OBSERVED_SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.MANUAL_REVIEW, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
       const merchant = ctx.merchantRepo.findById(session.merchantId);
       const branding = sanitizePublicBranding(merchant?.branding || {});
+      const terminalMarkexMeta = session.metadata ? {
+        courseId: session.metadata.courseId || null,
+        courseName: session.metadata.courseName || null,
+        markexManualVerification: Boolean(session.metadata.markexManualVerification),
+        verificationMode: session.metadata.verificationMode || null,
+        markex: Boolean(session.metadata.markex),
+        guestCheckout: Boolean(session.metadata.guestCheckout)
+      } : {};
       HttpServer.json(res, 200, {
         id: session.id,
         paymentId: session.id,
@@ -485,6 +540,7 @@ export function registerCheckoutRoutes(server, ctx) {
         // field is already public in the non-terminal payload below, so
         // including it here exposes nothing new.
         returnUrl: session.returnUrl,
+        metadata: terminalMarkexMeta,
         branding
       });
       return;
@@ -552,20 +608,21 @@ export function registerCheckoutRoutes(server, ctx) {
     const supportMobiles = merchantBranding.supportMobiles || (merchant?.contactPhone ? [merchant.contactPhone] : []);
     const privacyPolicyUrl = merchantBranding.privacyPolicyUrl || null;
 
-    let rawEnabled = merchantBranding.enabledPaymentMethods || (sellingMode === 'ONLINE' ? ['UPI'] : ['UPI', 'CASH_COUNTER', 'CARD_COUNTER']);
-    let enabledMethods = ['UPI'];
-    if (sellingMode === 'ONLINE') {
-      if (rawEnabled.includes('COD')) {
-        enabledMethods.push('COD');
-      }
-    } else {
-      if (rawEnabled.includes('CASH_COUNTER')) {
-        enabledMethods.push('CASH_COUNTER');
-      }
-      if (rawEnabled.includes('CARD_COUNTER')) {
-        enabledMethods.push('CARD_COUNTER');
-      }
-    }
+    const enabledMethods = resolveEnabledPaymentMethods(merchantBranding, sellingMode);
+    const bankDetails = enabledMethods.includes(PaymentMethod.BANK_TRANSFER)
+      ? resolveCheckoutBankTransfer(process.env)
+      : null;
+    const bankTransferUpiUri = bankDetails
+      ? buildBankTransferUpiUri({
+          bankTransfer: bankDetails,
+          amountPaise: session.amountPaise,
+          orderId: session.orderId,
+          currency: session.currency || 'INR'
+        })
+      : null;
+    const bankTransfer = bankDetails
+      ? { ...bankDetails, bankTransferUpiUri }
+      : null;
 
     const branding = sanitizePublicBranding({
       ...merchantBranding,
@@ -614,8 +671,22 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     // Merchant metadata is merchant-private: only the owner (or the internal renderer)
-    // may read it. The cancellation reason is exposed separately for the customer UI.
-    const publicMetadata = isOwnerCaller ? (session.metadata || {}) : {};
+    // may read it. Safe MARKEX course fields are exposed for guest checkout UI.
+    // Bank account / IFSC are only attached below when BANK_TRANSFER is enabled.
+    const markexPublic = session.metadata ? {
+      courseId: session.metadata.courseId || null,
+      courseName: session.metadata.courseName || null,
+      studentName: session.metadata.studentName || null,
+      studentMobile: session.metadata.studentMobile || null,
+      studentEmail: session.metadata.studentEmail || null,
+      guestCheckout: Boolean(session.metadata.guestCheckout),
+      markexManualVerification: Boolean(session.metadata.markexManualVerification),
+      verificationMode: session.metadata.verificationMode || null,
+      markex: Boolean(session.metadata.markex)
+    } : {};
+    const publicMetadata = isOwnerCaller
+      ? { ...(session.metadata || {}), ...markexPublic }
+      : markexPublic;
 
     // Single active payment session check (Section 1 & 2)
     const requestingDeviceId = req.headers['x-device-id'] || null;
@@ -706,6 +777,8 @@ export function registerCheckoutRoutes(server, ctx) {
       isMerchantEnabled,
       upiMode,
       upiServerIndicator,
+      bankTransfer,
+      bankTransferUpiUri,
       receivingAccountId: receivingAccount?.id || snapshot?.id || null,
       providers: UPI_PROVIDERS,
       canClickPaymentDone: session.status === PaymentStatus.ACTIVE,
@@ -916,6 +989,269 @@ export function registerCheckoutRoutes(server, ctx) {
         fullName: customer.name,
         phoneNumber: customer.mobileNumber
       }
+    });
+  });
+
+  // POST /api/v1/checkout/:id/bind-guest — MARKEX guest checkout (no OTP / login)
+  server.post('/api/v1/checkout/:id/bind-guest', async (req, res, params) => {
+    if (process.env.CHECKOUT_GUEST_MODE === 'false') {
+      HttpServer.json(res, 403, { error: 'Guest checkout is disabled.', code: 'GUEST_CHECKOUT_DISABLED' });
+      return;
+    }
+
+    const body = await HttpServer.parseBody(req).catch(() => ({}));
+    const session = ctx.sessionRepo.findById(params.id);
+    if (!session) {
+      HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
+      return;
+    }
+
+    if ([PaymentStatus.SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
+      HttpServer.json(res, 409, { error: `Cannot bind guest on terminal payment status '${session.status}'.` });
+      return;
+    }
+
+    const studentName = String(body.studentName || body.name || session.metadata?.studentName || '').trim();
+    const studentMobile = String(body.studentMobile || body.mobileNumber || session.metadata?.studentMobile || '').replace(/\D/g, '').slice(-10);
+    const studentEmail = String(body.studentEmail || body.email || session.metadata?.studentEmail || '').trim() || null;
+
+    if (!studentName || studentName.length < 2) {
+      HttpServer.json(res, 400, { error: 'Student name is required.' });
+      return;
+    }
+    if (!/^\d{10}$/.test(studentMobile)) {
+      HttpServer.json(res, 400, { error: 'Valid 10-digit mobile number is required.' });
+      return;
+    }
+
+    let customer = ctx.customerRepo.findByMobile(studentMobile);
+    if (!customer) {
+      try {
+        customer = ctx.customerRepo.create({
+          name: studentName,
+          mobileNumber: studentMobile,
+          email: studentEmail || undefined,
+          isPhoneVerified: false
+        });
+      } catch (err) {
+        HttpServer.json(res, 400, { error: err.message || 'Could not create guest student record.' });
+        return;
+      }
+    } else if (ctx.customerRepo.isBanned(customer.id)) {
+      HttpServer.json(res, 403, {
+        status: 'BLOCKED',
+        error: 'This mobile number is blocked from checkout.',
+        isBanned: true
+      });
+      return;
+    } else if (studentName && studentName !== customer.name) {
+      try {
+        ctx.db.execute(
+          `UPDATE customers SET name = ?, updated_at = ? WHERE id = ?`,
+          [studentName, new Date().toISOString(), customer.id]
+        );
+        customer = ctx.customerRepo.findById(customer.id);
+      } catch {}
+    }
+
+    if (session.customerId && session.customerId !== customer.id) {
+      HttpServer.json(res, 409, {
+        error: 'Payment session is already bound to another student identity.'
+      });
+      return;
+    }
+
+    const guestSession = ctx.customerSessionRepo.create({
+      customerId: customer.id,
+      ipAddress: req.socket?.remoteAddress || null,
+      userAgent: req.headers['user-agent'] || null,
+      ttlHours: 24
+    });
+
+    ctx.db.execute(`
+      UPDATE payment_sessions
+      SET customer_id = ?, updated_at = ?,
+          metadata = json_set(
+            COALESCE(metadata, '{}'),
+            '$.studentName', ?,
+            '$.studentMobile', ?,
+            '$.studentEmail', ?,
+            '$.guestCheckout', json('true'),
+            '$.markexManualVerification', json('true'),
+            '$.verificationMode', 'manual'
+          )
+      WHERE id = ?
+    `, [
+      customer.id,
+      new Date().toISOString(),
+      studentName,
+      studentMobile,
+      studentEmail,
+      params.id
+    ]);
+
+    let queueResult = { status: session.status, queuePosition: session.queuePosition, expiresAt: session.expiresAt };
+    const targetAccountId = session.receivingAccountId
+      || ctx.accountRepo?.findActiveForMerchant(session.merchantId)?.id
+      || session.metadata?.receivingAccountSnapshot?.id;
+
+    // Ensure receiving account is assigned for UPI QR generation
+    if (!session.receivingAccountId && targetAccountId) {
+      const account = ctx.accountRepo.findById(targetAccountId);
+      ctx.db.execute(`
+        UPDATE payment_sessions
+        SET receiving_account_id = ?,
+            metadata = json_set(COALESCE(metadata, '{}'), '$.receivingAccountSnapshot', json(?)),
+            updated_at = ?
+        WHERE id = ?
+      `, [
+        targetAccountId,
+        JSON.stringify(account ? {
+          id: account.id,
+          upiId: account.upiId,
+          payeeName: account.payeeName,
+          isMerchantEnabled: account.isMerchantEnabled
+        } : { id: targetAccountId }),
+        new Date().toISOString(),
+        params.id
+      ]);
+    }
+
+    if (session.status === PaymentStatus.INITIATED && targetAccountId) {
+      queueResult = ctx.queueEngine.enqueueOrActivate(params.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
+      if (queueResult.expiresAt) {
+        ctx.timingEngine.startActiveTimer(params.id, queueResult.expiresAt);
+      }
+      server.broadcastSse(params.id, 'status_change', {
+        status: queueResult.status,
+        queuePosition: queueResult.queuePosition,
+        expiresAt: queueResult.expiresAt
+      });
+    }
+
+    if (ctx.auditRepo) {
+      ctx.auditRepo.log({
+        merchantId: session.merchantId,
+        entityType: 'PAYMENT_SESSION',
+        entityId: params.id,
+        action: 'GUEST_STUDENT_BOUND',
+        actorType: AuditActorType.CUSTOMER,
+        actorId: customer.id,
+        details: { studentName, studentMobile, studentEmail, sessionStatus: queueResult.status }
+      });
+    }
+
+    HttpServer.json(res, 200, {
+      success: true,
+      status: queueResult.status,
+      queuePosition: queueResult.queuePosition || 0,
+      expiresAt: queueResult.expiresAt,
+      token: guestSession.token,
+      customer: {
+        id: customer.id,
+        name: studentName,
+        email: studentEmail || customer.email,
+        mobileNumber: studentMobile,
+        fullName: studentName,
+        phoneNumber: studentMobile,
+        guest: true
+      }
+    });
+  });
+
+  // POST /api/v1/checkout/:id/submit-for-review — student claims payment; admin must confirm
+  server.post('/api/v1/checkout/:id/submit-for-review', async (req, res, params) => {
+    const body = await HttpServer.parseBody(req).catch(() => ({}));
+    const session = ctx.sessionRepo.findById(params.id);
+    if (!session) {
+      HttpServer.json(res, 404, { error: 'Payment session not found.' });
+      return;
+    }
+
+    const manual = isManualVerificationMode() || session.metadata?.markexManualVerification === true
+      || session.metadata?.verificationMode === 'manual';
+    if (!manual) {
+      HttpServer.json(res, 409, { error: 'This checkout does not use manual admin verification.' });
+      return;
+    }
+
+    if (![PaymentStatus.ACTIVE, PaymentStatus.PROCESSING, PaymentStatus.MANUAL_REVIEW].includes(session.status)) {
+      HttpServer.json(res, 409, { error: `Cannot submit for review from status '${session.status}'.` });
+      return;
+    }
+
+    const utr = String(body.utr || body.reference || body.transactionReference || '').trim();
+    if (utr && !/^[A-Za-z0-9-]{6,35}$/.test(utr)) {
+      HttpServer.json(res, 400, { error: 'Enter a valid UPI reference (6–35 letters or digits), or leave blank.' });
+      return;
+    }
+
+    // Deduplicate UTR claims when provided
+    if (utr) {
+      const dup = ctx.db.queryOne(`
+        SELECT id FROM payment_sessions
+        WHERE id != ? AND upper(customer_utr) = upper(?) AND status IN ('MANUAL_REVIEW','SUCCESS','RECONCILED','OBSERVED_SUCCESS')
+        LIMIT 1
+      `, [session.id, utr]);
+      if (dup) {
+        HttpServer.json(res, 409, { error: 'This transaction reference has already been submitted for another payment.' });
+        return;
+      }
+    }
+
+    const now = new Date().toISOString();
+    ctx.db.execute(`
+      UPDATE payment_sessions
+      SET status = ?,
+          customer_utr = COALESCE(?, customer_utr),
+          utr_submitted_at = ?,
+          updated_at = ?,
+          metadata = json_set(COALESCE(metadata, '{}'), '$.pendingAdminVerification', json('true'), '$.studentPaymentClaimAt', ?)
+      WHERE id = ?
+    `, [PaymentStatus.MANUAL_REVIEW, utr || null, now, now, now, session.id]);
+
+    // Free UPI slot so the next student can pay while admin reviews
+    if (session.receivingAccountId) {
+      try {
+        ctx.db.execute(`
+          UPDATE payment_receiving_accounts
+          SET is_slot_busy = 0, current_active_session_id = NULL
+          WHERE id = ? AND current_active_session_id = ?
+        `, [session.receivingAccountId, session.id]);
+      } catch {}
+    }
+
+    if (ctx.auditRepo) {
+      ctx.auditRepo.log({
+        merchantId: session.merchantId,
+        entityType: 'PAYMENT_SESSION',
+        entityId: session.id,
+        action: 'STUDENT_SUBMITTED_FOR_ADMIN_REVIEW',
+        actorType: AuditActorType.CUSTOMER,
+        actorId: session.customerId || 'guest',
+        details: { utr: utr || null, previousStatus: session.status }
+      });
+    }
+
+    ctx.eventEmitter?.emit('PAYMENT.MANUAL_REVIEW', {
+      paymentId: session.id,
+      orderId: session.orderId,
+      merchantId: session.merchantId,
+      amountPaise: session.amountPaise,
+      reason: 'STUDENT_CLAIM_PENDING_ADMIN'
+    });
+
+    server.broadcastSse(session.id, 'status_change', {
+      status: PaymentStatus.MANUAL_REVIEW,
+      settlementState: 'PENDING_VERIFICATION'
+    });
+
+    HttpServer.json(res, 200, {
+      paymentId: session.id,
+      status: 'PENDING_VERIFICATION',
+      settlementState: 'PENDING_VERIFICATION',
+      customerUtr: utr || null,
+      message: 'Payment submitted for verification. MARKEX admin will confirm after checking the bank account. This is not yet a successful payment.'
     });
   });
 
@@ -1240,7 +1576,13 @@ export function registerCheckoutRoutes(server, ctx) {
       HttpServer.json(res, 409, { error: 'Manual UPI sessions cannot switch into an automatic payment flow.' });
       return;
     }
-    const validMethods = [PaymentMethod.UPI, PaymentMethod.COD, PaymentMethod.CASH_COUNTER, PaymentMethod.CARD_COUNTER];
+    const validMethods = [
+      PaymentMethod.UPI,
+      PaymentMethod.BANK_TRANSFER,
+      PaymentMethod.COD,
+      PaymentMethod.CASH_COUNTER,
+      PaymentMethod.CARD_COUNTER
+    ];
     if (!validMethods.includes(method)) {
       HttpServer.json(res, 400, { error: `Invalid payment method '${method}'. Allowed: ${validMethods.join(', ')}` });
       return;
@@ -1250,14 +1592,7 @@ export function registerCheckoutRoutes(server, ctx) {
     const merchantBranding = merchant?.branding || {};
     const isCounterRequested = method === PaymentMethod.CASH_COUNTER || method === PaymentMethod.CARD_COUNTER;
     let sellingMode = merchantBranding.sellingMode || (isCounterRequested ? 'OFFLINE' : 'ONLINE');
-    let rawEnabled = merchantBranding.enabledPaymentMethods || (sellingMode === 'ONLINE' ? ['UPI', 'COD'] : ['UPI', 'CASH_COUNTER', 'CARD_COUNTER']);
-    let enabledMethods = ['UPI'];
-    if (sellingMode === 'ONLINE') {
-      if (rawEnabled.includes('COD')) enabledMethods.push('COD');
-    } else {
-      if (rawEnabled.includes('CASH_COUNTER')) enabledMethods.push('CASH_COUNTER');
-      if (rawEnabled.includes('CARD_COUNTER')) enabledMethods.push('CARD_COUNTER');
-    }
+    const enabledMethods = resolveEnabledPaymentMethods(merchantBranding, sellingMode);
 
     if (!enabledMethods.includes(method)) {
       HttpServer.json(res, 400, { error: `Payment method '${method}' is disabled by the merchant.` });
@@ -1267,9 +1602,10 @@ export function registerCheckoutRoutes(server, ctx) {
     const previousMethod = session.method;
     const isCounter = method === PaymentMethod.CASH_COUNTER || method === PaymentMethod.CARD_COUNTER;
     const isCod = method === PaymentMethod.COD;
+    const isBankTransfer = method === PaymentMethod.BANK_TRANSFER;
     const wasCounter = previousMethod === PaymentMethod.CASH_COUNTER || previousMethod === PaymentMethod.CARD_COUNTER;
     const wasCod = previousMethod === PaymentMethod.COD;
-    const wasUpi = previousMethod === PaymentMethod.UPI || (!wasCounter && !wasCod);
+    const wasBankTransfer = previousMethod === PaymentMethod.BANK_TRANSFER;
     const nowIso = new Date().toISOString();
 
     let updates = `method = ?, updated_at = ?`;
@@ -1279,8 +1615,8 @@ export function registerCheckoutRoutes(server, ctx) {
     let timeRemainingSeconds = 0;
     let newExpiresAt = null;
 
-    if (isCounter || isCod) {
-      // Switching from UPI to COD or Counter:
+    if (isCounter || isCod || isBankTransfer) {
+      // Switching from UPI to COD / Bank Transfer / Counter:
       // Invariant: Concurrency slot and queue window are strictly for UPI payments.
       // Immediately invalidate and cancel the UPI queue reservation and its active timer.
       if (session.receivingAccountId) {
@@ -1291,9 +1627,8 @@ export function registerCheckoutRoutes(server, ctx) {
         ctx.timingEngine.cancelActiveTimer(session.id);
       }
 
-      if (isCod) {
-        // In Online Selling Mode, if Cash on Delivery is selected:
-        // Run a parallel standalone timer of 5 minutes (300 seconds) which is NOT part of the queue.
+      if (isCod || isBankTransfer) {
+        // Online: COD or BANK_TRANSFER use a standalone 5-minute window (not the UPI queue).
         newExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
         updates += `, receiving_account_id = NULL, status = 'ACTIVE', queue_position = 0, expires_at = ?`;
         updateParams.push(newExpiresAt.toISOString());
@@ -1302,7 +1637,6 @@ export function registerCheckoutRoutes(server, ctx) {
         session.queuePosition = 0;
         session.expiresAt = newExpiresAt;
 
-        // Start parallel 5-minute timer in timingEngine
         if (ctx.timingEngine) {
           ctx.timingEngine.startActiveTimer(session.id, newExpiresAt);
         }
@@ -1316,7 +1650,7 @@ export function registerCheckoutRoutes(server, ctx) {
         session.expiresAt = null;
         timeRemainingSeconds = 0;
       }
-    } else if (!isCounter && !isCod && (wasCounter || wasCod)) {
+    } else if (!isCounter && !isCod && !isBankTransfer && (wasCounter || wasCod || wasBankTransfer)) {
       // Switching back to UPI:
       // Cancel any running parallel COD timer
       if (ctx.timingEngine) {
@@ -1433,7 +1767,27 @@ export function registerCheckoutRoutes(server, ctx) {
       status: session.status,
       timeRemainingSeconds,
       expiresAt: session.expiresAt ? session.expiresAt.toISOString() : null,
-      counterInstructions: counterInstr
+      counterInstructions: counterInstr,
+      bankTransfer: (() => {
+        if (method !== PaymentMethod.BANK_TRANSFER) return null;
+        const details = resolveCheckoutBankTransfer(process.env);
+        if (!details) return null;
+        const uri = buildBankTransferUpiUri({
+          bankTransfer: details,
+          amountPaise: session.amountPaise,
+          orderId: session.orderId,
+          currency: session.currency || 'INR'
+        });
+        return { ...details, bankTransferUpiUri: uri };
+      })(),
+      bankTransferUpiUri: method === PaymentMethod.BANK_TRANSFER
+        ? buildBankTransferUpiUri({
+            bankTransfer: resolveCheckoutBankTransfer(process.env) || {},
+            amountPaise: session.amountPaise,
+            orderId: session.orderId,
+            currency: session.currency || 'INR'
+          })
+        : null
     });
   });
 

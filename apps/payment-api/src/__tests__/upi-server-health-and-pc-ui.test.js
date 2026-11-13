@@ -14,9 +14,15 @@ describe('UPI Server Health Indicator & Checkout State Invariants', () => {
   const origSmsPort = process.env.SMS_OBSERVER_PORT;
   const origGmailPort = process.env.GMAIL_OBSERVER_PORT;
 
+  const origVerificationMode = process.env.PAYMENT_VERIFICATION_MODE;
+  const origEnforceObserver = process.env.YOUPI_ENFORCE_OBSERVER_HEALTH;
+
   before(async () => {
     process.env.SMS_OBSERVER_PORT = '6999';
     process.env.GMAIL_OBSERVER_PORT = '6998';
+    // Exercise live observer health tiers (not MARKEX manual short-circuit).
+    process.env.PAYMENT_VERIFICATION_MODE = 'observer';
+    process.env.YOUPI_ENFORCE_OBSERVER_HEALTH = 'true';
     testDb = new Database({ inMemory: true });
     apiInstance = await startPaymentApi(6207, testDb);
     baseUrl = `http://localhost:${apiInstance.port}`;
@@ -25,6 +31,10 @@ describe('UPI Server Health Indicator & Checkout State Invariants', () => {
   after(async () => {
     process.env.SMS_OBSERVER_PORT = origSmsPort;
     process.env.GMAIL_OBSERVER_PORT = origGmailPort;
+    if (origVerificationMode === undefined) delete process.env.PAYMENT_VERIFICATION_MODE;
+    else process.env.PAYMENT_VERIFICATION_MODE = origVerificationMode;
+    if (origEnforceObserver === undefined) delete process.env.YOUPI_ENFORCE_OBSERVER_HEALTH;
+    else process.env.YOUPI_ENFORCE_OBSERVER_HEALTH = origEnforceObserver;
     await apiInstance.close();
     testDb.close();
   });
@@ -70,7 +80,9 @@ describe('UPI Server Health Indicator & Checkout State Invariants', () => {
     // Ensure no android devices
     testDb.execute('DELETE FROM android_devices');
 
-    // Create session
+    // Payment create is gated by observer health in observer mode; use manual briefly for setup.
+    process.env.PAYMENT_VERIFICATION_MODE = 'manual';
+    process.env.YOUPI_ENFORCE_OBSERVER_HEALTH = 'false';
     const createRes = await request('/api/v1/payments', {
       method: 'POST',
       body: {
@@ -79,6 +91,8 @@ describe('UPI Server Health Indicator & Checkout State Invariants', () => {
         currency: 'INR'
       }
     });
+    process.env.PAYMENT_VERIFICATION_MODE = 'observer';
+    process.env.YOUPI_ENFORCE_OBSERVER_HEALTH = 'true';
     assert.equal(createRes.status, 201);
     const paymentId = createRes.body.paymentId;
 

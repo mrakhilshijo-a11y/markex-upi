@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding } from '@youpi/common';
+import { getCoinStoreWebhookSecret, LEGACY_DEFAULT_WEBHOOK_SECRET, resolveDefaultBranding, isValidVpa } from '@youpi/common';
 import { getDatabase } from './database.js';
 import { MerchantRepository } from './repositories/merchant.repository.js';
 import { ReceivingAccountRepository } from './repositories/receiving-account.repository.js';
@@ -170,6 +170,39 @@ export function runMigrations(targetDb) {
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_observations_fingerprint ON payment_observations (fingerprint_hash);"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_observations_attributed_payment ON payment_observations (attributed_payment_id);"); } catch {}
 
+  // MARKEX payment links (individual shareable checkout URLs)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS payment_links (
+        id TEXT PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        merchant_id TEXT NOT NULL REFERENCES merchants(id),
+        course_id TEXT NOT NULL,
+        course_name TEXT NOT NULL,
+        amount_paise INTEGER NOT NULL CHECK(amount_paise > 0),
+        student_name TEXT,
+        student_mobile TEXT,
+        student_email TEXT,
+        status TEXT NOT NULL DEFAULT 'ACTIVE'
+          CHECK(status IN ('ACTIVE','USED','EXPIRED','REVOKED','PAID')),
+        expires_at TEXT,
+        payment_session_id TEXT REFERENCES payment_sessions(id) ON DELETE SET NULL,
+        created_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        revoked_at TEXT,
+        revoked_by TEXT,
+        paid_at TEXT,
+        allow_reuse_after_paid INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT DEFAULT '{}'
+      );
+    `);
+  } catch {}
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_links_token ON payment_links (token);'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_payment_links_merchant ON payment_links (merchant_id, created_at);'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_payment_links_status ON payment_links (status);'); } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_payment_links_session ON payment_links (payment_session_id);'); } catch {}
+
   // Seed default merchant if empty
   const merchantRepo = new MerchantRepository(db);
   const existing = merchantRepo.findAll();
@@ -177,10 +210,10 @@ export function runMigrations(targetDb) {
   let defaultMerchant;
   if (existing.length === 0) {
     const branding = resolveDefaultBranding();
-    const businessName = process.env.DEFAULT_MERCHANT_NAME || 'YOUPI Demo Store';
-    const slug = process.env.DEFAULT_MERCHANT_SLUG || 'demo-store';
-    const contactEmail = process.env.DEFAULT_SUPPORT_EMAIL || 'merchant@youpi.local';
-    const contactPhone = process.env.DEFAULT_SUPPORT_PHONE || '9876543210';
+    const businessName = process.env.MERCHANT_NAME || process.env.DEFAULT_MERCHANT_NAME || 'MARKEX TRADING ACADEMY';
+    const slug = process.env.DEFAULT_MERCHANT_SLUG || 'markex-academy';
+    const contactEmail = process.env.DEFAULT_SUPPORT_EMAIL || 'support@markex-academy.com';
+    const contactPhone = process.env.DEFAULT_SUPPORT_PHONE || '8137864105';
 
     defaultMerchant = merchantRepo.create({
       id: '00000000-0000-0000-0000-000000000001',
@@ -195,7 +228,11 @@ export function runMigrations(targetDb) {
         primaryColor: branding.primaryColor,
         logoUrl: branding.logoUrl,
         trustBadgeText: branding.trustBadgeText,
-        footerGuarantee: branding.footerGuarantee
+        footerGuarantee: branding.footerGuarantee,
+        businessName,
+        website: 'https://markex-academy.com',
+        sellingMode: 'ONLINE',
+        enabledPaymentMethods: ['UPI', 'BANK_TRANSFER']
       }
     });
   } else {
@@ -210,19 +247,61 @@ export function runMigrations(targetDb) {
       merchantRepo.update(defaultMerchant.id, { webhookSecret: getCoinStoreWebhookSecret() });
       console.warn('[migrate] Rotated the default merchant webhook secret away from the legacy public value. Update your merchant webhook verifier.');
     }
+    // Keep MARKEX identity / payment methods current when env is configured
+    const desiredName = (process.env.MERCHANT_NAME || process.env.DEFAULT_MERCHANT_NAME || '').trim();
+    const currentBranding = defaultMerchant.branding || {};
+    const branding = resolveDefaultBranding(currentBranding);
+    const bankConfigured = Boolean(
+      String(process.env.MERCHANT_BANK_ACCOUNT || '').trim() &&
+      String(process.env.MERCHANT_IFSC || '').trim()
+    );
+    const methods = Array.isArray(currentBranding.enabledPaymentMethods)
+      ? [...currentBranding.enabledPaymentMethods]
+      : ['UPI'];
+    if (bankConfigured && !methods.includes('BANK_TRANSFER')) methods.push('BANK_TRANSFER');
+    const needsMethodSync = bankConfigured && !(currentBranding.enabledPaymentMethods || []).includes('BANK_TRANSFER');
+    const needsNameSync = Boolean(desiredName && desiredName !== defaultMerchant.businessName);
+    if (needsNameSync || needsMethodSync) {
+      merchantRepo.update(defaultMerchant.id, {
+        businessName: desiredName || defaultMerchant.businessName,
+        branding: {
+          ...currentBranding,
+          appName: branding.appName,
+          primaryColor: branding.primaryColor,
+          trustBadgeText: branding.trustBadgeText,
+          footerGuarantee: branding.footerGuarantee,
+          businessName: desiredName || currentBranding.businessName || defaultMerchant.businessName,
+          website: currentBranding.website || 'https://markex-academy.com',
+          sellingMode: currentBranding.sellingMode || 'ONLINE',
+          enabledPaymentMethods: methods
+        }
+      });
+      defaultMerchant = merchantRepo.findById(defaultMerchant.id) || defaultMerchant;
+    }
   }
 
-  // Seed default UPI receiving account if none
+  // Seed / sync UPI receiving account from server-side MERCHANT_UPI_ID (never bank account / IFSC)
   const accountRepo = new ReceivingAccountRepository(db);
   const accounts = accountRepo.findByMerchantId(defaultMerchant.id);
+  const envVpa = String(process.env.MERCHANT_UPI_ID || process.env.DEFAULT_PAYEE_VPA || '').trim();
+  const payeeName = process.env.MERCHANT_NAME || defaultMerchant.businessName || 'MARKEX TRADING ACADEMY';
   if (accounts.length === 0) {
     accountRepo.create({
       id: '00000000-0000-0000-0000-000000000002',
       merchantId: defaultMerchant.id,
-      upiId: 'merchant@upi',
-      payeeName: defaultMerchant.businessName,
+      upiId: (envVpa && isValidVpa(envVpa)) ? envVpa : 'merchant@upi',
+      payeeName,
       isActive: true
     });
+  } else if (envVpa && isValidVpa(envVpa)) {
+    const active = accounts.find((a) => a.isActive) || accounts[0];
+    if (active && active.upiId !== envVpa) {
+      try {
+        accountRepo.upsertActiveForMerchant(defaultMerchant.id, envVpa, payeeName);
+      } catch (err) {
+        console.warn('[migrate] Could not sync MERCHANT_UPI_ID to receiving account:', err.message);
+      }
+    }
   }
 
   // Demo customer seeding is opt-in and never carries real personal data.

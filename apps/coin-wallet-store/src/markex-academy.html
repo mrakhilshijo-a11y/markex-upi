@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MARKEX Trading Academy · Course Payment</title>
+  <style>
+    :root {
+      --ink: #0b3d2e;
+      --muted: #4d6b5d;
+      --line: #d7e6dd;
+      --panel: #ffffff;
+      --bg: #eef5f1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 420px at 0% 0%, #d8efe4, transparent 60%),
+        linear-gradient(180deg, #f7fbf9, var(--bg));
+      min-height: 100vh;
+    }
+    .hero {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 48px 20px 24px;
+    }
+    .eyebrow {
+      font-family: "Segoe UI", sans-serif;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      line-height: 1.05;
+      margin: 0 0 12px;
+      letter-spacing: -0.03em;
+    }
+    .lede {
+      font-family: "Segoe UI", sans-serif;
+      font-size: 1.05rem;
+      color: var(--muted);
+      max-width: 38rem;
+      margin: 0;
+    }
+    .grid {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 8px 20px 64px;
+      display: grid;
+      gap: 16px;
+    }
+    @media (min-width: 800px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .course {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      min-height: 280px;
+    }
+    .course h2 {
+      font-size: 1.35rem;
+      margin: 0 0 8px;
+    }
+    .course p {
+      font-family: "Segoe UI", sans-serif;
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+      flex: 1;
+    }
+    .price {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin: 12px 0 16px;
+    }
+    button {
+      font-family: "Segoe UI", sans-serif;
+      border: 0;
+      border-radius: 12px;
+      background: var(--ink);
+      color: #fff;
+      padding: 12px 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .notice {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 20px 48px;
+      font-family: "Segoe UI", sans-serif;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    #checkoutModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(8, 28, 20, 0.55);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 40;
+    }
+    #checkoutModal.open { display: flex; }
+    .modal {
+      width: min(420px, 100%);
+      background: #fff;
+      border-radius: 18px;
+      padding: 22px;
+      border: 1px solid var(--line);
+    }
+    .modal h3 { margin: 0 0 6px; font-size: 1.25rem; }
+    .modal .sub { font-family: "Segoe UI", sans-serif; color: var(--muted); font-size: 0.9rem; margin-bottom: 14px; }
+    label { display:block; font-family:"Segoe UI",sans-serif; font-size:12px; font-weight:700; margin:12px 0 6px; text-transform:uppercase; letter-spacing:.04em; }
+    input { width:100%; padding:12px; border-radius:10px; border:1px solid var(--line); font-size:16px; font-family:"Segoe UI",sans-serif; }
+    .err { color:#b91c1c; font-family:"Segoe UI",sans-serif; font-size:13px; margin-top:10px; display:none; }
+    .actions { display:flex; gap:10px; margin-top:16px; }
+    .actions button.secondary { background:#e8f0eb; color:var(--ink); }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <div class="eyebrow">MARKEX Trading Academy</div>
+    <h1>Invest in your trading education</h1>
+    <p class="lede">Choose a course and pay securely with UPI. No student login or OTP required. Confirmation happens after academy bank verification.</p>
+  </section>
+
+  <section class="grid" id="courseGrid">
+    <div class="course"><p>Loading courses…</p></div>
+  </section>
+
+  <p class="notice">
+    Direct UPI payments settle to the MARKEX merchant UPI account. The UPI ID may be visible during QR / intent payment.
+    This is not a bank-approved hosted payment gateway. Pay via UPI QR or bank transfer on the secure checkout screen; academy staff confirms bank credit manually.
+  </p>
+
+  <div id="checkoutModal">
+    <div class="modal">
+      <h3 id="modalTitle">Checkout</h3>
+      <div class="sub" id="modalSub"></div>
+      <label>Student Name</label>
+      <input id="name" maxlength="120" placeholder="Full name" />
+      <label>Mobile Number</label>
+      <input id="mobile" maxlength="10" inputmode="numeric" placeholder="10-digit mobile" />
+      <label>Email (optional)</label>
+      <input id="email" type="email" maxlength="160" placeholder="student@email.com" />
+      <div class="err" id="err"></div>
+      <div class="actions">
+        <button type="button" class="secondary" id="cancelBtn">Cancel</button>
+        <button type="button" id="payBtn">Continue to Pay</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let selectedCourse = null;
+
+    async function loadCourses() {
+      const res = await fetch('/api/markex/courses');
+      const data = await res.json();
+      const grid = document.getElementById('courseGrid');
+      grid.innerHTML = '';
+      for (const c of data.courses || []) {
+        const el = document.createElement('article');
+        el.className = 'course';
+        el.innerHTML = `
+          <h2>${c.name}</h2>
+          <p>${c.description}</p>
+          <div class="price">${c.amountDisplay}</div>
+          <button type="button" data-id="${c.id}">Pay for this course</button>
+        `;
+        el.querySelector('button').addEventListener('click', () => openModal(c));
+        grid.appendChild(el);
+      }
+    }
+
+    function openModal(course) {
+      selectedCourse = course;
+      document.getElementById('modalTitle').textContent = course.name;
+      document.getElementById('modalSub').textContent = `${course.amountDisplay} · Direct UPI · Admin bank verification`;
+      document.getElementById('err').style.display = 'none';
+      document.getElementById('checkoutModal').classList.add('open');
+    }
+
+    document.getElementById('cancelBtn').addEventListener('click', () => {
+      document.getElementById('checkoutModal').classList.remove('open');
+    });
+
+    document.getElementById('payBtn').addEventListener('click', async () => {
+      const err = document.getElementById('err');
+      err.style.display = 'none';
+      const studentName = document.getElementById('name').value.trim();
+      const studentMobile = document.getElementById('mobile').value.replace(/\D/g, '').slice(-10);
+      const studentEmail = document.getElementById('email').value.trim() || null;
+      if (studentName.length < 2 || !/^\d{10}$/.test(studentMobile)) {
+        err.textContent = 'Enter a valid name and 10-digit mobile number.';
+        err.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('payBtn');
+      btn.disabled = true;
+      btn.textContent = 'Creating payment…';
+      try {
+        const res = await fetch('/api/markex/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            courseId: selectedCourse.id,
+            studentName,
+            studentMobile,
+            studentEmail
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Checkout failed');
+        const q = new URLSearchParams({
+          guestName: studentName,
+          guestMobile: studentMobile,
+          guestEmail: studentEmail || ''
+        });
+        window.location.href = `${data.checkoutUrl}?${q.toString()}`;
+      } catch (e) {
+        err.textContent = e.message || 'Checkout failed';
+        err.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Continue to Pay';
+      }
+    });
+
+    loadCourses().catch(() => {
+      document.getElementById('courseGrid').innerHTML = '<div class="course"><p>Could not load courses. Start the payment API and refresh.</p></div>';
+    });
+  </script>
+</body>
+</html>

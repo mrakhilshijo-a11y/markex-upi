@@ -234,14 +234,30 @@ export function registerAdminRoutes(server, ctx) {
     HttpServer.json(res, 200, {
       payments: payments.map(p => ({
         id: p.id,
+        paymentId: p.id,
         orderId: p.orderId,
         amountPaise: p.amountPaise.toString(),
+        amount: (Number(p.amountPaise) / 100).toFixed(2),
         currency: p.currency,
         method: p.method,
         status: p.status,
         verificationLevel: p.verificationLevel || 0,
         verificationSources: p.verificationSources || [],
         verificationTag: p.verificationTag || 'UNVERIFIED',
+        customerUtr: p.customerUtr || null,
+        manualReviewedBy: p.manualReviewedBy || null,
+        manualReviewedAt: p.manualReviewedAt || null,
+        // Safe operational metadata for admin UI (never includes bank account / IFSC)
+        metadata: {
+          courseId: p.metadata?.courseId || null,
+          courseName: p.metadata?.courseName || null,
+          studentName: p.metadata?.studentName || null,
+          studentMobile: p.metadata?.studentMobile || null,
+          markex: Boolean(p.metadata?.markex),
+          markexManualVerification: Boolean(p.metadata?.markexManualVerification),
+          verificationMode: p.metadata?.verificationMode || null,
+          paymentLinkId: p.metadata?.paymentLinkId || null
+        },
         createdAt: p.createdAt,
         completedAt: p.completedAt
       }))
@@ -274,7 +290,8 @@ export function registerAdminRoutes(server, ctx) {
     const paymentId = params.id;
     const body = await HttpServer.parseBody(req).catch(() => ({}));
     const operatorId = body.operatorId || 'admin-operator';
-    const notes = body.notes || 'Manually reconciled by admin';
+    const notes = body.notes || 'Manually reconciled by admin after independent bank check';
+    const bankReference = body.bankReference || body.utr || body.transactionReference || null;
 
     const session = ctx.sessionRepo.findById(paymentId);
     if (!session) {
@@ -282,7 +299,13 @@ export function registerAdminRoutes(server, ctx) {
       return;
     }
 
-    if (session.method === PaymentMethod.MANUAL_UPI) {
+    // Legacy MANUAL_UPI partner flow still expects merchant-system approval,
+    // except MARKEX guest / payment-link sessions which use this admin confirm path.
+    const isMarkexManual = session.metadata?.markex === true
+      || session.metadata?.markexManualVerification === true
+      || session.metadata?.verificationMode === 'manual'
+      || session.metadata?.paymentLinkId;
+    if (session.method === PaymentMethod.MANUAL_UPI && !isMarkexManual) {
       HttpServer.json(res, 409, { error: 'Manual UPI claims must be approved in the merchant order system after checking the receiving bank account.' });
       return;
     }
@@ -292,32 +315,140 @@ export function registerAdminRoutes(server, ctx) {
       return;
     }
 
-    const targetStatus = (session.status === PaymentStatus.OBSERVED_SUCCESS || session.status === PaymentStatus.MANUAL_REVIEW)
+    const targetStatus = (session.status === PaymentStatus.OBSERVED_SUCCESS || session.status === PaymentStatus.MANUAL_REVIEW || isMarkexManual)
       ? PaymentStatus.RECONCILED
       : PaymentStatus.SUCCESS;
 
+    const now = new Date().toISOString();
+    ctx.db.execute(`
+      UPDATE payment_sessions
+      SET manual_reviewed_by = ?,
+          manual_reviewed_at = ?,
+          manual_review_reason = ?,
+          customer_utr = COALESCE(?, customer_utr),
+          updated_at = ?
+      WHERE id = ?
+    `, [operatorId, now, notes, bankReference, now, paymentId]);
+
     const updated = ctx.sessionRepo.transitionToTerminal(paymentId, targetStatus);
+
+    if (ctx.paymentLinkRepo && session.metadata?.paymentLinkId) {
+      try { ctx.paymentLinkRepo.markPaid(session.metadata.paymentLinkId); } catch {}
+    } else if (ctx.paymentLinkRepo) {
+      try {
+        const linked = ctx.db.queryOne(
+          `SELECT id FROM payment_links WHERE payment_session_id = ? LIMIT 1`,
+          [paymentId]
+        );
+        if (linked?.id) ctx.paymentLinkRepo.markPaid(linked.id);
+      } catch {}
+    }
 
     if (ctx.auditRepo) {
       ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: paymentId,
-        action: 'PAYMENT_MANUALLY_RECONCILED',
+        action: 'PAYMENT_MANUALLY_CONFIRMED',
         actorType: AuditActorType.ADMIN,
         actorId: operatorId,
-        details: { operatorId, notes, previousStatus: session.status }
+        details: {
+          operatorId,
+          notes,
+          bankReference,
+          previousStatus: session.status,
+          confirmedAt: now,
+          courseId: session.metadata?.courseId || null
+        }
       });
     }
 
     server.broadcastSse(paymentId, 'status_change', {
       status: targetStatus,
       method: session.method,
-      orderId: session.orderId
+      orderId: session.orderId,
+      settlementState: 'RECONCILED'
     });
 
     if (ctx.eventEmitter) {
-      ctx.eventEmitter.emit('PAYMENT.SUCCESS', {
+      ctx.eventEmitter.emit(targetStatus === PaymentStatus.RECONCILED ? 'PAYMENT.RECONCILED' : 'PAYMENT.SUCCESS', {
+        paymentId: updated.id,
+        orderId: session.orderId,
+        merchantId: session.merchantId,
+        amountPaise: session.amountPaise
+      });
+      if (targetStatus === PaymentStatus.RECONCILED) {
+        ctx.eventEmitter.emit('PAYMENT.SUCCESS', {
+          paymentId: updated.id,
+          orderId: session.orderId,
+          merchantId: session.merchantId,
+          amountPaise: session.amountPaise
+        });
+      }
+    }
+
+    HttpServer.json(res, 200, {
+      success: true,
+      confirmed: true,
+      paymentId,
+      status: targetStatus,
+      reconciledBy: operatorId,
+      confirmedAt: now,
+      bankReference: bankReference || session.customerUtr || null
+    });
+  });
+
+  // POST /api/v1/admin/payments/:id/reject — admin rejects student payment claim after bank check
+  server.post('/api/v1/admin/payments/:id/reject', async (req, res, params) => {
+    const paymentId = params.id;
+    const body = await HttpServer.parseBody(req).catch(() => ({}));
+    const operatorId = body.operatorId || 'admin-operator';
+    const reason = String(body.reason || body.notes || 'Rejected after bank verification').slice(0, 500);
+
+    const session = ctx.sessionRepo.findById(paymentId);
+    if (!session) {
+      HttpServer.json(res, 404, { error: `Payment session not found: ${paymentId}` });
+      return;
+    }
+
+    if ([PaymentStatus.SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
+      HttpServer.json(res, 409, { error: `Cannot reject a payment in terminal status '${session.status}'.` });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    ctx.db.execute(`
+      UPDATE payment_sessions
+      SET manual_reviewed_by = ?,
+          manual_reviewed_at = ?,
+          manual_review_reason = ?,
+          updated_at = ?
+      WHERE id = ?
+    `, [operatorId, now, reason, now, paymentId]);
+
+    const updated = ctx.sessionRepo.transitionToTerminal(paymentId, PaymentStatus.FAILED);
+
+    if (ctx.auditRepo) {
+      ctx.auditRepo.log({
+        merchantId: session.merchantId,
+        entityType: 'PAYMENT_SESSION',
+        entityId: paymentId,
+        action: 'PAYMENT_MANUALLY_REJECTED',
+        actorType: AuditActorType.ADMIN,
+        actorId: operatorId,
+        details: { operatorId, reason, previousStatus: session.status, rejectedAt: now }
+      });
+    }
+
+    server.broadcastSse(paymentId, 'status_change', {
+      status: PaymentStatus.FAILED,
+      method: session.method,
+      orderId: session.orderId,
+      reason
+    });
+
+    if (ctx.eventEmitter) {
+      ctx.eventEmitter.emit('PAYMENT.FAILED', {
         paymentId: updated.id,
         orderId: session.orderId,
         merchantId: session.merchantId,
@@ -327,10 +458,12 @@ export function registerAdminRoutes(server, ctx) {
 
     HttpServer.json(res, 200, {
       success: true,
-      confirmed: true,
+      rejected: true,
       paymentId,
-      status: targetStatus,
-      reconciledBy: operatorId
+      status: PaymentStatus.FAILED,
+      rejectedBy: operatorId,
+      rejectedAt: now,
+      reason
     });
   });
 

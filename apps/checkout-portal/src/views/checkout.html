@@ -32,6 +32,7 @@
   <script>
     const PAYMENT_ID = "{{PAYMENT_ID}}";
     const API_BASE = "{{API_BASE_URL}}";
+    const GUEST_CHECKOUT_MODE = "{{GUEST_CHECKOUT_MODE}}" !== "false";
 
     let state = null;
     let countdownTimer = null;
@@ -587,6 +588,77 @@
       otpCooldownTimer = setInterval(updateUI, 1000);
     }
 
+    function showGuestAuthError(message) {
+      const el = document.getElementById('guestAuthError');
+      if (!el) return;
+      el.style.display = message ? 'block' : 'none';
+      el.textContent = message || '';
+    }
+
+    function prefillGuestFromQueryOrState(data) {
+      const params = new URLSearchParams(window.location.search);
+      const nameInput = document.getElementById('guestStudentName');
+      const mobileInput = document.getElementById('guestStudentMobile');
+      const emailInput = document.getElementById('guestStudentEmail');
+      const meta = data?.metadata || {};
+      if (nameInput && !nameInput.value) {
+        nameInput.value = params.get('guestName') || meta.studentName || '';
+      }
+      if (mobileInput && !mobileInput.value) {
+        mobileInput.value = (params.get('guestMobile') || meta.studentMobile || '').replace(/\D/g, '').slice(-10);
+      }
+      if (emailInput && !emailInput.value) {
+        emailInput.value = params.get('guestEmail') || meta.studentEmail || '';
+      }
+      const courseBox = document.getElementById('guestCourseSummary');
+      if (courseBox && (meta.courseName || data?.amount)) {
+        courseBox.style.display = 'block';
+        const cn = document.getElementById('guestCourseName');
+        const ca = document.getElementById('guestCourseAmount');
+        if (cn) cn.textContent = meta.courseName || 'Course payment';
+        if (ca) ca.textContent = data?.amount ? `₹${data.amount}` : '';
+      }
+    }
+
+    async function handleGuestCheckoutSubmit() {
+      showGuestAuthError('');
+      const studentName = String(document.getElementById('guestStudentName')?.value || '').trim();
+      const studentMobile = String(document.getElementById('guestStudentMobile')?.value || '').replace(/\D/g, '').slice(-10);
+      const studentEmail = String(document.getElementById('guestStudentEmail')?.value || '').trim() || null;
+      if (studentName.length < 2) {
+        showGuestAuthError('Please enter your full name.');
+        return;
+      }
+      if (!/^\d{10}$/.test(studentMobile)) {
+        showGuestAuthError('Enter a valid 10-digit mobile number.');
+        return;
+      }
+      const btn = document.getElementById('btnGuestContinue');
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span>Starting payment…</span>'; }
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/bind-guest`, {
+          method: 'POST',
+          headers: { ...getApiHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ studentName, studentMobile, studentEmail })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'Could not start guest checkout.');
+        }
+        activeCustomer = data.customer;
+        activeToken = data.token;
+        try {
+          savePreservedIdentity(activeCustomer, activeToken);
+        } catch {}
+        setGatewayAuthMode(false);
+        await loadState();
+      } catch (err) {
+        showGuestAuthError(err.message || 'Could not continue.');
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<span>Continue to Pay</span> &rsaquo;'; }
+      }
+    }
+
     async function handleAuthMobileSubmit() {
       const input = document.getElementById('authMobileInput');
       const btn = document.getElementById('btnAuthContinue');
@@ -1008,6 +1080,8 @@
 
     function hideAllContent() {
       document.getElementById('viewUpiContent').hidden = true;
+      const vBank = document.getElementById('viewBankTransferContent');
+      if (vBank) vBank.hidden = true;
       const vCod = document.getElementById('viewCodContent');
       if (vCod) vCod.hidden = true;
       const vCash = document.getElementById('viewCashContent');
@@ -1071,6 +1145,68 @@
       }, 1000);
     }
 
+
+    function renderBankTransferDetails(data) {
+      const bt = (data && data.bankTransfer) || (state && state.bankTransfer) || null;
+      const nameEl = document.getElementById('bankAccountName');
+      const accEl = document.getElementById('bankAccountNumber');
+      const ifscEl = document.getElementById('bankIfsc');
+      const bankRow = document.getElementById('bankNameRow');
+      const bankVal = document.getElementById('bankNameValue');
+      const instr = document.getElementById('bankTransferInstructions');
+      if (!bt) return;
+      if (data && data.bankTransferUpiUri) {
+        state = state || {};
+        state.bankTransferUpiUri = data.bankTransferUpiUri;
+      } else if (bt.bankTransferUpiUri) {
+        state = state || {};
+        state.bankTransferUpiUri = bt.bankTransferUpiUri;
+      }
+      if (nameEl) nameEl.textContent = bt.accountName || 'MARKEX TRADING ACADEMY';
+      if (accEl) accEl.textContent = bt.accountNumber || '—';
+      if (ifscEl) ifscEl.textContent = bt.ifsc || '—';
+      if (bt.bankName && bankRow && bankVal) {
+        bankRow.style.display = 'block';
+        bankVal.textContent = bt.bankName;
+      }
+      if (instr && bt.instructions) instr.textContent = bt.instructions;
+      loadBankAccountQr();
+    }
+
+    function copyBankField(kind) {
+      const bt = (state && state.bankTransfer) || null;
+      if (!bt) return;
+      let value;
+      if (kind === 'ifsc') value = bt.ifsc;
+      else if (kind === 'beneficiary') {
+        value = [
+          `Beneficiary: ${bt.accountName || 'MARKEX TRADING ACADEMY'}`,
+          `Account: ${bt.accountNumber || ''}`,
+          `IFSC: ${bt.ifsc || ''}`,
+          bt.bankName ? `Bank: ${bt.bankName}` : '',
+          bt.accountUpiVpa ? `UPI payee: ${bt.accountUpiVpa}` : ''
+        ].filter(Boolean).join('\n');
+      } else value = bt.accountNumber;
+      if (!value) return;
+      const done = () => {
+        try {
+          if (typeof showToast === 'function') {
+            showToast(kind === 'ifsc' ? 'IFSC copied' : (kind === 'beneficiary' ? 'Beneficiary details copied' : 'Account number copied'));
+          }
+        } catch (e) {}
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(String(value)).then(done).catch(() => {});
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = String(value);
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    }
+
     function renderMethodSelectorBar(data) {
       const bar = document.getElementById('paymentMethodSelectorBar');
       const sellingMode = data.sellingMode || 'ONLINE';
@@ -1100,6 +1236,7 @@
       }
 
       const tabUpi = document.getElementById('tabMethodUpi');
+      const tabBank = document.getElementById('tabMethodBank');
       const tabCod = document.getElementById('tabMethodCod');
       const tabCash = document.getElementById('tabMethodCash');
       const tabCard = document.getElementById('tabMethodCard');
@@ -1107,11 +1244,20 @@
       if (tabUpi) tabUpi.style.display = 'inline-flex';
 
       const pcUpi = document.getElementById('pcMethodCardUpi');
+      const pcBank = document.getElementById('pcMethodCardBank');
       const pcCod = document.getElementById('pcMethodCardCod');
       const pcCash = document.getElementById('pcMethodCardCash');
       const pcCard = document.getElementById('pcMethodCardCard');
 
       if (pcUpi) pcUpi.style.display = 'block';
+      const bankEnabled = enabledMethods.includes('BANK_TRANSFER');
+      if (tabBank) tabBank.style.display = bankEnabled ? 'inline-flex' : 'none';
+      if (pcBank) pcBank.style.display = bankEnabled ? 'block' : 'none';
+      if (data && data.bankTransfer) {
+        state = state || {};
+        state.bankTransfer = data.bankTransfer;
+        renderBankTransferDetails(data);
+      }
 
       if (sellingMode === 'ONLINE') {
         // Online Selling Mode:
@@ -1147,6 +1293,7 @@
     function updateMethodTabsUI(method) {
       const tabs = [
         { id: 'tabMethodUpi', method: 'UPI' },
+        { id: 'tabMethodBank', method: 'BANK_TRANSFER' },
         { id: 'tabMethodCod', method: 'COD' },
         { id: 'tabMethodCash', method: 'CASH_COUNTER' },
         { id: 'tabMethodCard', method: 'CARD_COUNTER' }
@@ -1163,6 +1310,7 @@
 
       const pcCards = [
         { id: 'pcMethodCardUpi', method: 'UPI' },
+        { id: 'pcMethodCardBank', method: 'BANK_TRANSFER' },
         { id: 'pcMethodCardCod', method: 'COD' },
         { id: 'pcMethodCardCash', method: 'CASH_COUNTER' },
         { id: 'pcMethodCardCard', method: 'CARD_COUNTER' }
@@ -1181,7 +1329,9 @@
     function switchMethodFromDowntime() {
       const enabled = state?.enabledMethods || state?.branding?.enabledPaymentMethods || [];
       const sellingMode = state?.sellingMode || state?.branding?.sellingMode || 'OFFLINE';
-      if (sellingMode === 'ONLINE' && enabled.includes('COD')) {
+      if (enabled.includes('BANK_TRANSFER')) {
+        selectPaymentMethod('BANK_TRANSFER');
+      } else if (sellingMode === 'ONLINE' && enabled.includes('COD')) {
         selectPaymentMethod('COD');
       } else if (enabled.includes('CASH_COUNTER')) {
         selectPaymentMethod('CASH_COUNTER');
@@ -1195,6 +1345,11 @@
 
       if (method === 'UPI') {
         document.getElementById('viewUpiContent').hidden = false;
+        document.getElementById('ypgStickyFooter').style.display = 'flex';
+      } else if (method === 'BANK_TRANSFER') {
+        const vBank = document.getElementById('viewBankTransferContent');
+        if (vBank) vBank.hidden = false;
+        renderBankTransferDetails(state);
         document.getElementById('ypgStickyFooter').style.display = 'flex';
       } else if (method === 'COD') {
         const vCod = document.getElementById('viewCodContent');
@@ -1226,12 +1381,26 @@
             state.status = resData.status;
           }
 
+          if (resData.bankTransfer) {
+            state.bankTransfer = resData.bankTransfer;
+            renderBankTransferDetails(resData);
+          }
           if (method === 'COD') {
             runCountdown(resData.timeRemainingSeconds || 300, sec => {
               const el = document.getElementById('codTimerText');
               if (el) el.textContent = formatTime(sec);
             }, () => {
               const el = document.getElementById('codTimerText');
+              if (el) el.textContent = 'Expired';
+              fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/expire`, { method: 'POST', headers: getApiHeaders() }).catch(() => { });
+              loadState();
+            });
+          } else if (method === 'BANK_TRANSFER') {
+            runCountdown(resData.timeRemainingSeconds || 300, sec => {
+              const el = document.getElementById('bankTimerText');
+              if (el) el.textContent = formatTime(sec);
+            }, () => {
+              const el = document.getElementById('bankTimerText');
               if (el) el.textContent = 'Expired';
               fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/expire`, { method: 'POST', headers: getApiHeaders() }).catch(() => { });
               loadState();
@@ -2051,12 +2220,31 @@
           const footer = document.getElementById('ypgStickyFooter');
           if (footer) footer.style.display = 'none';
           const titleEl = document.getElementById('failedTitleText');
-          if (titleEl) titleEl.textContent = 'Payment held for review';
+          if (titleEl) titleEl.textContent = 'Payment pending verification';
           const descEl = document.getElementById('failedDescriptionText');
-          if (descEl) descEl.textContent = 'This alert matched more than one payment, or it was flagged. It is not confirmed and no order should be fulfilled yet.';
+          if (descEl) {
+            descEl.textContent = (data.metadata?.markexManualVerification || GUEST_CHECKOUT_MODE)
+              ? 'Thanks. MARKEX admin will confirm this payment after checking the bank account. This is not yet a successful payment.'
+              : 'This alert matched more than one payment, or it was flagged. It is not confirmed and no order should be fulfilled yet.';
+          }
           try {
             postToMerchant({ event: 'youpi.payment_manual_review', data: data });
           } catch (e) { }
+          return;
+        }
+
+        // MARKEX manual mode: observer matches are informational only — never celebrate as paid
+        if (data.status === 'OBSERVED_SUCCESS' && (data.metadata?.markexManualVerification || GUEST_CHECKOUT_MODE)) {
+          closeProcessingModal();
+          hideAllContent();
+          const failedView = document.getElementById('viewFailedContent');
+          if (failedView) failedView.hidden = false;
+          const footer = document.getElementById('ypgStickyFooter');
+          if (footer) footer.style.display = 'none';
+          const titleEl = document.getElementById('failedTitleText');
+          if (titleEl) titleEl.textContent = 'Payment pending verification';
+          const descEl = document.getElementById('failedDescriptionText');
+          if (descEl) descEl.textContent = 'A bank alert was observed. Final confirmation still requires MARKEX admin verification against the bank account.';
           return;
         }
 
@@ -2092,13 +2280,13 @@
             if (descEl) descEl.textContent = 'A bank alert matched this payment. It is not confirmed against a bank statement yet.';
             if (codApiBox) codApiBox.style.display = 'none';
           } else if (data.status === 'RECONCILED') {
-            if (titleEl) titleEl.textContent = 'Payment reconciled';
-            if (descEl) descEl.textContent = 'This payment was matched to a bank statement.';
+            if (titleEl) titleEl.textContent = 'Payment Successful!';
+            if (descEl) descEl.textContent = 'Your payment was confirmed by MARKEX Trading Academy after bank verification. Welcome to the academy.';
             if (codApiBox) codApiBox.style.display = 'none';
           } else {
             if (titleEl) titleEl.textContent = 'Payment Successful!';
-            const activeAppName = state?.branding?.appName || '{{APP_NAME}}' || 'YouPI PG';
-            if (descEl) descEl.textContent = `Your payment was automatically verified by ${activeAppName} banking observers.`;
+            const activeAppName = state?.branding?.appName || '{{APP_NAME}}' || 'MARKEX';
+            if (descEl) descEl.textContent = `Your payment was verified by ${activeAppName}.`;
             if (codApiBox) codApiBox.style.display = 'none';
           }
 
@@ -2196,19 +2384,40 @@
       );
 
       if (!hasCustomer) {
-        if (data.customer && data.customer.phone) {
-          const mobInput = document.getElementById('authMobileInput');
-          if (mobInput && !mobInput.value) {
-            mobInput.value = String(data.customer.phone).replace(/\D/g, '').slice(-10);
+        setGatewayAuthMode(true);
+        prefillGuestFromQueryOrState(data);
+        if (!GUEST_CHECKOUT_MODE) {
+          if (data.customer && data.customer.phone) {
+            const mobInput = document.getElementById('authMobileInput');
+            if (mobInput && !mobInput.value) {
+              mobInput.value = String(data.customer.phone).replace(/\D/g, '').slice(-10);
+            }
+          }
+          const stepMob = document.getElementById('authStepMobile');
+          const isAlreadyOnMobile = stepMob && !stepMob.hidden;
+          if (!currentAuthStep || (currentAuthStep === 'mobile' && !isAlreadyOnMobile)) {
+            goToAuthStep('mobile');
+          }
+          renderSavedAccountsUI();
+        }
+        // Auto-bind when payment-link prefill is complete
+        if (GUEST_CHECKOUT_MODE) {
+          const params = new URLSearchParams(window.location.search);
+          const autoName = params.get('guestName') || data?.metadata?.studentName;
+          const autoMobile = (params.get('guestMobile') || data?.metadata?.studentMobile || '').replace(/\D/g, '').slice(-10);
+          if (autoName && /^\d{10}$/.test(autoMobile) && !window.__markexGuestAutoBound) {
+            window.__markexGuestAutoBound = true;
+            const nameInput = document.getElementById('guestStudentName');
+            const mobileInput = document.getElementById('guestStudentMobile');
+            const emailInput = document.getElementById('guestStudentEmail');
+            if (nameInput) nameInput.value = autoName;
+            if (mobileInput) mobileInput.value = autoMobile;
+            if (emailInput && (params.get('guestEmail') || data?.metadata?.studentEmail)) {
+              emailInput.value = params.get('guestEmail') || data.metadata.studentEmail;
+            }
+            handleGuestCheckoutSubmit();
           }
         }
-        setGatewayAuthMode(true);
-        const stepMob = document.getElementById('authStepMobile');
-        const isAlreadyOnMobile = stepMob && !stepMob.hidden;
-        if (!currentAuthStep || (currentAuthStep === 'mobile' && !isAlreadyOnMobile)) {
-          goToAuthStep('mobile');
-        }
-        renderSavedAccountsUI();
         return;
       }
 
@@ -2459,6 +2668,69 @@
       }, 400);
     }
 
+
+    function getBankTransferUpiUri() {
+      const raw = state?.bankTransferUpiUri
+        || state?.bankTransfer?.bankTransferUpiUri
+        || null;
+      return sanitizeUpiUri(raw);
+    }
+
+    async function loadBankAccountQr() {
+      const box = document.getElementById('bankAccountQrContainer');
+      if (!box) return;
+      const uri = getBankTransferUpiUri();
+      const candidates = [`/checkout/${PAYMENT_ID}/qr.svg?rail=bank`];
+      if (typeof API_BASE === 'string' && API_BASE) {
+        candidates.push(`${API_BASE}/checkout/${PAYMENT_ID}/qr.svg?rail=bank`);
+      }
+      for (const src of candidates) {
+        try {
+          const res = await fetch(src, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const svg = await res.text();
+          if (svg && svg.includes('<svg')) {
+            box.innerHTML = svg;
+            return;
+          }
+        } catch (e) {}
+      }
+      if (uri) {
+        box.innerHTML = `<div style="font-size:11px;color:var(--ypg-text-muted);padding:8px;text-align:center;">Open UPI apps to pay this bank account.<br/><code style="font-size:10px;word-break:break-all;">${uri.replace(/</g,'')}</code></div>`;
+      } else {
+        box.innerHTML = `<div style="font-size:11px;color:var(--ypg-text-muted);text-align:center;">Account QR unavailable — use Copy or UPI button.</div>`;
+      }
+    }
+
+    function handleOpenBankAccountUpiIntent() {
+      const uri = getBankTransferUpiUri();
+      if (!uri) {
+        try { if (typeof showToast === 'function') showToast('Bank account UPI link not ready'); } catch (e) {}
+        return;
+      }
+      try {
+        window.location.assign(uri);
+      } catch (err) {
+        console.warn('Could not launch bank-account UPI intent:', err);
+      }
+    }
+
+    function handleBankAccountUpiAppClick(appName) {
+      const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (window.innerWidth <= 767);
+      if (isMobileDevice) {
+        handleOpenBankAccountUpiIntent();
+        return;
+      }
+      const bt = state?.bankTransfer || {};
+      const detail = [bt.accountName, bt.accountNumber, bt.ifsc].filter(Boolean).join(' · ');
+      try {
+        if (detail) navigator.clipboard.writeText(`${bt.accountName || ''}\nA/C: ${bt.accountNumber || ''}\nIFSC: ${bt.ifsc || ''}`);
+        showOptionToast(`Beneficiary copied. Open ${appName} on your phone, or tap Pay to Bank Account on mobile.`);
+      } catch {
+        showOptionToast(`On mobile, tap Pay to Bank Account via UPI Apps for ${appName}.`);
+      }
+    }
+
     function sanitizeUpiUri(raw) {
       if (typeof raw !== 'string') return null;
       const trimmed = raw.trim();
@@ -2640,13 +2912,22 @@
 
     // --- MANUAL PAYMENT DONE VERIFICATION ---
     async function submitPaymentDone() {
-      openProcessingModal('Processing your payment', 'This will only take a few seconds.');
+      openProcessingModal('Submitting for verification', 'Your payment will be pending until MARKEX admin confirms the bank credit.');
       emitTriggerHook('PAYMENT_DONE_CLICKED');
 
       try {
-        const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/payment-done`, {
+        const manualMode = GUEST_CHECKOUT_MODE
+          || state?.metadata?.markexManualVerification
+          || state?.metadata?.verificationMode === 'manual';
+        const utrInput = document.getElementById('manualUtrInput');
+        const utr = String(utrInput?.value || '').trim();
+        const endpoint = manualMode
+          ? `${API_BASE}/api/v1/checkout/${PAYMENT_ID}/submit-for-review`
+          : `${API_BASE}/api/v1/checkout/${PAYMENT_ID}/payment-done`;
+        const res = await fetch(endpoint, {
           method: 'POST',
-          headers: getApiHeaders()
+          headers: { ...getApiHeaders(), 'Content-Type': 'application/json' },
+          body: manualMode ? JSON.stringify({ utr: utr || undefined }) : undefined
         });
         if (res.ok) {
           loadState();

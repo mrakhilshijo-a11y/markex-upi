@@ -343,13 +343,13 @@ describe('resolveDefaultBranding', () => {
     delete process.env.DEFAULT_FOOTER_GUARANTEE;
 
     const b = resolveDefaultBranding();
-    assert.equal(b.appName, 'YOUPI PG');
-    assert.equal(b.primaryColor, '#2563eb');
-    assert.equal(b.supportEmail, 'support@youpi.local');
-    assert.equal(b.supportPhone, '9876543210');
+    assert.equal(b.appName, 'MARKEX');
+    assert.equal(b.primaryColor, '#0B3D2E');
+    assert.equal(b.supportEmail, 'support@markex-academy.com');
+    assert.equal(b.supportPhone, '8137864105');
     assert.equal(b.logoUrl, null);
-    assert.equal(b.trustBadgeText, 'YOUPI PG Verified Business');
-    assert.equal(b.footerGuarantee, '100% Payment Protection by YOUPI PG');
+    assert.equal(b.trustBadgeText, 'MARKEX Verified Business');
+    assert.equal(b.footerGuarantee, '100% Payment Protection by MARKEX');
   });
 
   test('honors environment variable overrides', () => {
@@ -376,6 +376,8 @@ describe('resolveDefaultBranding', () => {
 
   test('gives explicit caller overrides highest priority over env', () => {
     process.env.DEFAULT_APP_NAME = 'ApexPay';
+    delete process.env.DEFAULT_TRUST_BADGE_TEXT;
+    delete process.env.DEFAULT_FOOTER_GUARANTEE;
 
     const b = resolveDefaultBranding({ appName: 'MerchantBrand' });
     assert.equal(b.appName, 'MerchantBrand');

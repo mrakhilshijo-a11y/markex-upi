@@ -221,9 +221,9 @@ export class CheckoutServer {
   renderHtml(paymentId, state) {
     let html = this.loadTemplateWithPartials();
 
-    const appName = state?.branding?.appName || (process.env.DEFAULT_APP_NAME || '').trim() || 'YouPI PG';
-    const primaryColor = state?.branding?.primaryColor || (process.env.DEFAULT_PRIMARY_COLOR || '').trim() || '#0b63e5';
-    const merchantName = state?.merchantName || 'Merchant Checkout';
+    const appName = state?.branding?.appName || (process.env.DEFAULT_APP_NAME || '').trim() || 'MARKEX';
+    const primaryColor = state?.branding?.primaryColor || (process.env.DEFAULT_PRIMARY_COLOR || '').trim() || '#0B3D2E';
+    const merchantName = state?.merchantName || process.env.MERCHANT_NAME || 'MARKEX TRADING ACADEMY';
     const orderId = state?.orderId || '';
     const logoUrl = state?.branding?.logoUrl || (process.env.DEFAULT_LOGO_URL || '').trim() || '';
     const sidebarNotice = state?.branding?.sidebarNotice || 'Fast & Secure 256-Bit Encrypted Payments';
@@ -289,8 +289,15 @@ export class CheckoutServer {
       PC_CARD_STYLE: pcCardStyle,
       DOWNTIME_ALT_BTN_DISPLAY: downtimeAltBtnDisplay,
       DOWNTIME_ALT_BTN_LABEL: downtimeAltBtnLabel,
+      GUEST_CHECKOUT_MODE: process.env.CHECKOUT_GUEST_MODE === 'false' ? 'false' : 'true',
       INITIAL_STATE_JSON: serializeForScript(state || {})
     });
+  }
+
+  renderPayLinkHtml(token) {
+    const templatePath = path.join(__dirname, 'views', 'pay-link.html');
+    let html = fs.readFileSync(templatePath, 'utf8');
+    return html.replace(/\{\{TOKEN\}\}/g, escapeHtml(token));
   }
 
   createServer() {
@@ -513,7 +520,10 @@ export class CheckoutServer {
       if (qrMatch) {
         const paymentId = qrMatch[1];
         const state = await this.fetchPaymentState(paymentId);
-        const upiUri = state?.upiUri || `upi://pay?pa=${encodeURIComponent(state?.payeeVpa || 'merchant@upi')}&pn=${encodeURIComponent(state?.merchantName || 'Store')}&am=${encodeURIComponent(state?.amount || '100.00')}&tn=${encodeURIComponent(paymentId)}`;
+        const wantBank = url.searchParams.get('rail') === 'bank' || state?.method === 'BANK_TRANSFER';
+        const upiUri = (wantBank && state?.bankTransferUpiUri)
+          ? state.bankTransferUpiUri
+          : (state?.upiUri || `upi://pay?pa=${encodeURIComponent(state?.payeeVpa || 'merchant@upi')}&pn=${encodeURIComponent(state?.merchantName || 'Store')}&am=${encodeURIComponent(state?.amount || '100.00')}&tn=${encodeURIComponent(paymentId)}`);
 
         const svg = generateQrSvg(upiUri, 220);
         res.writeHead(200, {
@@ -542,6 +552,21 @@ export class CheckoutServer {
           'Expires': '0',
           'Access-Control-Allow-Origin': '*',
           ...checkoutFrameHeaders()
+        });
+        res.end(rendered);
+        return;
+      }
+
+      // MARKEX individual payment link: GET /pay/:token
+      const payLinkMatch = pathname.match(/^\/pay\/([a-fA-F0-9]{32,128})$/);
+      if (payLinkMatch) {
+        const rendered = this.renderPayLinkHtml(payLinkMatch[1]);
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+          ...BASE_SECURITY_HEADERS
         });
         res.end(rendered);
         return;
