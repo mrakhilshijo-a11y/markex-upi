@@ -202,6 +202,8 @@ export async function seedPostgresDefaults(db) {
     }
   }
 
+  defaultMerchant = await merchantRepo.alignStoreCredential(defaultMerchant, getCoinStoreWebhookSecret()) || defaultMerchant;
+
   const accountRepo = new ReceivingAccountRepository(db);
   const accounts = await accountRepo.findByMerchantId(defaultMerchant.id);
   const envVpa = String(process.env.MERCHANT_UPI_ID || process.env.DEFAULT_PAYEE_VPA || '').trim();

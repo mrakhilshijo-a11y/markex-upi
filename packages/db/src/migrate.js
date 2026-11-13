@@ -285,6 +285,8 @@ export async function runMigrations(targetDb) {
     }
   }
 
+  defaultMerchant = await merchantRepo.alignStoreCredential(defaultMerchant, getCoinStoreWebhookSecret()) || defaultMerchant;
+
   // Seed / sync UPI receiving account from server-side MERCHANT_UPI_ID (never bank account / IFSC)
   const accountRepo = new ReceivingAccountRepository(db);
   const accounts = await accountRepo.findByMerchantId(defaultMerchant.id);

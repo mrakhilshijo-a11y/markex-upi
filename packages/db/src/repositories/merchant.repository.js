@@ -177,7 +177,23 @@ export class MerchantRepository {
     if (merchant.apiKeyHash && safeEqual(hashApiKey(clean), merchant.apiKeyHash)) {
       return true;
     }
+    // The academy store presents its webhook secret as the merchant key.
+    if (merchant.webhookSecret && safeEqual(clean, merchant.webhookSecret)) {
+      return true;
+    }
     return false;
+  }
+
+  /**
+   * Keep the default store's webhook secret and API-key hash on the secret
+   * this process actually sends. A cold start otherwise generates a new
+   * secret while Neon still has the previous hash, and checkout returns 401.
+   * A dedicated rotated merchantApiKey is left alone.
+   */
+  async alignStoreCredential(merchant, secret) {
+    if (!merchant || !secret || merchant.merchantKey) return merchant;
+    if (merchant.webhookSecret === secret && this.verifyApiKey(merchant, secret)) return merchant;
+    return this.update(merchant.id, { webhookSecret: secret });
   }
 
   /**

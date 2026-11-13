@@ -101,7 +101,7 @@ export class CoinWalletStoreServer {
    */
   constructor(options = {}) {
     const internalPort = process.env.PAYMENT_API_PORT || 6100;
-    this.gatewayApiUrl = options.gatewayApiUrl || process.env.PAYMENT_API_URL || process.env.PAYMENT_API_INTERNAL_URL || `http://127.0.0.1:${internalPort}`;
+    this.gatewayApiUrl = options.gatewayApiUrl || process.env.PAYMENT_API_INTERNAL_URL || process.env.PAYMENT_API_URL || `http://127.0.0.1:${internalPort}`;
     this.merchantId = options.merchantId || '00000000-0000-0000-0000-000000000001';
     this.webhookSecret = options.webhookSecret || getCoinStoreWebhookSecret();
 
