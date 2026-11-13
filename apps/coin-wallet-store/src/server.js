@@ -113,6 +113,10 @@ export class CoinWalletStoreServer {
       pubUrl = pubUrl.slice(0, -1);
     }
     this.publicBaseUrl = pubUrl;
+    this.currentPublicBaseUrl = () => {
+      const fromEnv = String(process.env.COIN_STORE_PUBLIC_URL || process.env.BASE_DEMO_STORE_URL || '').trim();
+      return (fromEnv || this.publicBaseUrl || '').replace(/\/+$/, '');
+    };
 
     // orderId -> gateway paymentId for orders this store created (used to verify payments server-side)
     this.orderPayments = new Map();
@@ -477,7 +481,7 @@ export class CoinWalletStoreServer {
 
             const orderId = `MARKEX-${course.id.toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
             const amountStr = (amountPaise / 100).toFixed(2);
-            const returnUrl = `${this.publicBaseUrl}/order-success?order_id=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(amountStr)}`;
+            const returnUrl = `${this.currentPublicBaseUrl()}/order-success?order_id=${encodeURIComponent(orderId)}&amount=${encodeURIComponent(amountStr)}`;
 
             const payment = await this.paymentClient.createPayment({
               orderId,
@@ -681,7 +685,7 @@ export class CoinWalletStoreServer {
             // The post-payment return target must be derived from the store's own configured
             // base URL. Building it from Host / X-Forwarded-* lets an attacker choose where a
             // paying customer is redirected (phishing after a real payment).
-            const returnUrl = `${this.publicBaseUrl}/wallet?orderId=${encodeURIComponent(orderId)}`;
+            const returnUrl = `${this.currentPublicBaseUrl()}/wallet?orderId=${encodeURIComponent(orderId)}`;
 
             // Coin quantity is derived server-side from the amount paid. A client-supplied
             // `coins` value would let a buyer pay ₹1 and be credited an arbitrary balance.

@@ -136,9 +136,27 @@ export function registerPaymentRoutes(server, ctx) {
         HttpServer.json(res, 400, { error: 'returnUrl must use the http or https scheme.' });
         return;
       }
-      const allowedReturnOrigins = String(process.env.YOUPI_ALLOWED_RETURN_ORIGINS || '')
-        .split(/[\s,]+/).map(value => value.trim()).filter(Boolean);
-      if (!allowedReturnOrigins.includes(parsedReturnUrl.origin)) {
+      const allowedReturnOrigins = new Set();
+      const allowSources = [
+        process.env.YOUPI_ALLOWED_RETURN_ORIGINS,
+        process.env.YOUPI_ALLOWED_ORIGINS,
+        process.env.COIN_STORE_PUBLIC_URL,
+        process.env.BASE_DEMO_STORE_URL,
+        process.env.CHECKOUT_PUBLIC_URL,
+        process.env.BASE_CHECKOUT_URL,
+      ];
+      for (const source of allowSources) {
+        for (const value of String(source || '').split(/[\s,]+/)) {
+          const trimmed = value.trim();
+          if (!trimmed) continue;
+          try {
+            allowedReturnOrigins.add(new URL(trimmed).origin);
+          } catch {
+            allowedReturnOrigins.add(trimmed);
+          }
+        }
+      }
+      if (!allowedReturnOrigins.has(parsedReturnUrl.origin)) {
         HttpServer.json(res, 400, { error: 'returnUrl origin is not allowlisted for this gateway.' });
         return;
       }

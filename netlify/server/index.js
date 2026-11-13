@@ -55,8 +55,10 @@ function applyPublicUrls(origin) {
   }
   for (const key of ['YOUPI_ALLOWED_ORIGINS', 'YOUPI_ALLOWED_RETURN_ORIGINS', 'CHECKOUT_FRAME_ANCESTORS']) {
     const cur = String(process.env[key] || '');
-    if (!cur || cur.includes('localhost') || !cur.includes(origin)) {
+    if (!cur || cur.includes('localhost')) {
       process.env[key] = origin;
+    } else if (!cur.includes(origin)) {
+      process.env[key] = `${cur} ${origin}`;
     }
   }
   process.env.BASE_PAYMENT_API_URL = process.env.BASE_PAYMENT_API_URL || origin;
