@@ -75,7 +75,7 @@ See **YOUPI PG V2** live in action across Desktop and Mobile checkout flows:
 
 <br/>
 
-> **High-Definition 120FPS Raw Recordings**: [assets/Desktop.mp4](assets/Desktop.mp4) • [assets/Mobile.mp4](assets/Mobile.mp4)
+> **Demo GIFs**: [assets/desktop-demo.gif](assets/desktop-demo.gif) • [assets/mobile-demo.gif](assets/mobile-demo.gif)
 
 <br/>
 

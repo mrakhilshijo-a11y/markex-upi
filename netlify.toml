@@ -9,6 +9,8 @@
 [build.environment]
   NODE_VERSION = "24"
   NODE_ENV = "production"
+  # Broken/missing LFS objects must not fail the Netlify clone
+  GIT_LFS_SKIP_SMUDGE = "1"
 
 [server]
   region = "us-east-1"
