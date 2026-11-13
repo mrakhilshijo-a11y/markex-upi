@@ -1,6 +1,3 @@
-# MARKEX / YOUPI PG — Netlify Server (Early Access)
-# Requires Node 24+ and Netlify Server EA enabled on the site.
-
 [build]
   command = "npm install"
   publish = "netlify/public"
@@ -9,19 +6,8 @@
 [build.environment]
   NODE_VERSION = "24"
   NODE_ENV = "production"
-  # Broken/missing LFS objects must not fail the Netlify clone
   GIT_LFS_SKIP_SMUDGE = "1"
 
-# Netlify Server regions are airport codes (cmh = US East / Ohio). us-east-1 is invalid and fails config parse.
 [server]
   region = "cmh"
   size = "small"
-
-# Single-origin: Netlify Server handles dynamic routes.
-# Static publish dir is a minimal fallback landing.
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
