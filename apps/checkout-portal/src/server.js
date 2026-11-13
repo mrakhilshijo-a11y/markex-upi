@@ -176,7 +176,11 @@ export class CheckoutServer {
       }
     } catch {}
 
-    this.apiBaseUrl = options.apiBaseUrl || process.env.PAYMENT_API_URL || process.env.BASE_PAYMENT_API_URL || 'http://localhost:6100';
+    this.apiBaseUrl = options.apiBaseUrl
+      || process.env.PAYMENT_API_INTERNAL_URL
+      || process.env.PAYMENT_API_URL
+      || process.env.BASE_PAYMENT_API_URL
+      || 'http://127.0.0.1:6100';
     this.htmlTemplatePath = appFile('views/checkout.html', 'apps/checkout-portal/src/views/checkout.html');
     this.sdkScriptPath = appFile('sdk/youpi-checkout.js', 'apps/checkout-portal/src/sdk/youpi-checkout.js');
     this.partialsDir = appFile('views/partials', 'apps/checkout-portal/src/views/partials');

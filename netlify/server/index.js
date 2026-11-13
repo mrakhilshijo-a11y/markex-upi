@@ -98,7 +98,12 @@ function pickPort(pathname) {
     pathname.startsWith('/pay') ||
     pathname === '/youpi.js' ||
     pathname.startsWith('/youpi.js') ||
-    pathname.startsWith('/assets/checkout')
+    pathname.startsWith('/assets/checkout') ||
+    pathname.startsWith('/icons/') ||
+    pathname === '/css/checkout.css' ||
+    pathname.startsWith('/css/checkout.') ||
+    pathname === '/js/checkout.js' ||
+    pathname.startsWith('/js/checkout.')
   ) {
     return INTERNAL.checkout;
   }
@@ -114,9 +119,12 @@ async function bootInternals() {
 
   process.env.PAYMENT_API_PORT = String(INTERNAL.api);
   process.env.CHECKOUT_PORTAL_PORT = String(INTERNAL.checkout);
+  process.env.CHECKOUT_PORT = String(INTERNAL.checkout);
   process.env.COIN_STORE_PORT = String(INTERNAL.store);
   process.env.COIN_WALLET_STORE_PORT = String(INTERNAL.store);
   process.env.MERCHANT_ADMIN_PORT = String(INTERNAL.admin);
+  process.env.PAYMENT_API_INTERNAL_URL = `http://127.0.0.1:${INTERNAL.api}`;
+  process.env.CHECKOUT_PORTAL_URL = `http://127.0.0.1:${INTERNAL.checkout}`;
   process.env.BASE_PAYMENT_API_URL =
     process.env.BASE_PAYMENT_API_URL || `http://127.0.0.1:${INTERNAL.api}`;
 

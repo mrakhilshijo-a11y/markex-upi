@@ -348,7 +348,8 @@ export class CoinWalletStoreServer {
 
       // REVERSE PROXY: /checkout/*, /icons/*, /css/*, and /js/* -> Checkout Portal (Port 7000)
       if (pathname.startsWith('/checkout') || pathname.startsWith('/icons/') || pathname.startsWith('/css/') || pathname.startsWith('/js/')) {
-      const portalUrl = process.env.CHECKOUT_PORTAL_URL || `http://127.0.0.1:${process.env.CHECKOUT_PORT || 7000}`;
+      const portalUrl = process.env.CHECKOUT_PORTAL_URL
+        || `http://127.0.0.1:${process.env.CHECKOUT_PORTAL_PORT || process.env.CHECKOUT_PORT || 7100}`;
       const targetUrl = new URL(req.url, portalUrl);
       const requestClient = targetUrl.protocol === 'https:' ? https : http;
       const proxyReq = requestClient.request({
