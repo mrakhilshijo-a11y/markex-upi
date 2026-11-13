@@ -28,8 +28,8 @@ export class QueueEngine {
    * @param {number} [activeDurationMs] Defaults to the engine's configured payment window
    * @returns {{ status: string, queuePosition: number, expiresAt: Date | null }}
    */
-  enqueueOrActivate(sessionId, receivingAccountId, activeDurationMs = this.activeDurationMs) {
-    const result = this.sessionRepo.acquireSlotAtomic(sessionId, receivingAccountId, activeDurationMs);
+  async enqueueOrActivate(sessionId, receivingAccountId, activeDurationMs = this.activeDurationMs) {
+    const result = await this.sessionRepo.acquireSlotAtomic(sessionId, receivingAccountId, activeDurationMs);
 
     if (result.status === PaymentStatus.ACTIVE) {
       this.eventEmitter.emit('SESSION.ACTIVATED', {
@@ -39,7 +39,7 @@ export class QueueEngine {
       });
 
       if (this.auditRepo) {
-        this.auditRepo.log({
+        await this.auditRepo.log({
           entityType: 'PAYMENT_SESSION',
           entityId: sessionId,
           action: 'PAYMENT_SLOT_ACTIVATED',
@@ -55,7 +55,7 @@ export class QueueEngine {
       });
 
       if (this.auditRepo) {
-        this.auditRepo.log({
+        await this.auditRepo.log({
           entityType: 'PAYMENT_SESSION',
           entityId: sessionId,
           action: 'PAYMENT_ENQUEUED',
@@ -74,25 +74,25 @@ export class QueueEngine {
    * @param {number} [activeDurationMs] Defaults to the engine's configured payment window
    * @returns {any | null} The newly activated session or null if queue is empty or slot is busy
    */
-  promoteNext(receivingAccountId, activeDurationMs = this.activeDurationMs) {
+  async promoteNext(receivingAccountId, activeDurationMs = this.activeDurationMs) {
     // Check if slot is currently occupied
-    const active = this.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
+    const active = await this.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
     if (active) {
       return null; // Slot is still owned
     }
 
-    const nextQueued = this.sessionRepo.getNextQueuedSession(receivingAccountId);
+    const nextQueued = await this.sessionRepo.getNextQueuedSession(receivingAccountId);
     if (!nextQueued) {
       return null; // Queue is empty
     }
 
     // Atomically activate the queued session
-    const res = this.sessionRepo.acquireSlotAtomic(nextQueued.id, receivingAccountId, activeDurationMs);
+    const res = await this.sessionRepo.acquireSlotAtomic(nextQueued.id, receivingAccountId, activeDurationMs);
     if (res.status === PaymentStatus.ACTIVE) {
       // Re-index remaining queued sessions
-      this.sessionRepo.reindexQueue(receivingAccountId);
+      await this.sessionRepo.reindexQueue(receivingAccountId);
 
-      const activatedSession = this.sessionRepo.findById(nextQueued.id);
+      const activatedSession = await this.sessionRepo.findById(nextQueued.id);
 
       this.eventEmitter.emit('SESSION.ACTIVATED', {
         sessionId: nextQueued.id,
@@ -106,7 +106,7 @@ export class QueueEngine {
       });
 
       if (this.auditRepo) {
-        this.auditRepo.log({
+        await this.auditRepo.log({
           merchantId: activatedSession.merchantId,
           entityType: 'PAYMENT_SESSION',
           entityId: nextQueued.id,
@@ -128,11 +128,11 @@ export class QueueEngine {
    * @param {number} queuePosition
    * @returns {number} Estimated seconds until activation
    */
-  calculateEstimatedWaitSeconds(receivingAccountId, queuePosition) {
+  async calculateEstimatedWaitSeconds(receivingAccountId, queuePosition) {
     if (queuePosition <= 0) return 0;
 
     let currentSlotRemaining = 0;
-    const currentActive = this.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
+    const currentActive = await this.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
 
     if (currentActive) {
       const now = Date.now();

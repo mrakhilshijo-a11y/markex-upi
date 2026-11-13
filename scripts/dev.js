@@ -1,17 +1,17 @@
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { runMigrations } from '../packages/db/src/migrate.js';
 import { startControlCenter } from '../apps/control-center/src/index.js';
 import { startCloudflaredSafely } from '../packages/common/src/tunnel-command.js';
+import { loadRootEnv } from '../packages/common/src/load-root-env.js';
 
 if (!process.env.YOUPI_MODE) process.env.YOUPI_MODE = 'localhost';
 if (!process.env.NODE_ENV) process.env.NODE_ENV = 'development';
 
-// Load the shared configuration before migrations and service discovery. Set the
-// dev defaults first so .env cannot override them; explicit shell values still win.
-const rootEnv = fileURLToPath(new URL('../.env', import.meta.url));
-if (fs.existsSync(rootEnv)) process.loadEnvFile(rootEnv);
+// Load `.env` then `.env.local` (Neon) before migrations and service discovery.
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+loadRootEnv(rootDir);
 
 console.log('====================================================');
 console.log('🚀 Starting YOUPI PG (Development / Localhost Mode)');
@@ -19,7 +19,7 @@ console.log('====================================================');
 
 // 1. Run database migrations & seeds
 console.log('[1/2] Checking and applying database migrations...');
-const migrationResult = runMigrations();
+const migrationResult = await runMigrations();
 console.log(`[✓] Database ready. Default merchant: ${migrationResult.defaultMerchant.businessName}`);
 
 // Check for user-configured Cloudflare Tunnel command

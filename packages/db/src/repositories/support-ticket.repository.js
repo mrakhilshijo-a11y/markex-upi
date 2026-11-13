@@ -9,7 +9,7 @@ export class SupportTicketRepository {
     this.db = db;
   }
 
-  createTicket(data) {
+  async createTicket(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
 
@@ -18,7 +18,7 @@ export class SupportTicketRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.merchantId,
       data.customerId,
@@ -30,7 +30,7 @@ export class SupportTicketRepository {
     ]);
 
     if (data.initialMessage) {
-      this.addMessage({
+      await this.addMessage({
         ticketId: id,
         senderType: data.initialMessage.senderType || SenderType.CUSTOMER,
         senderId: data.initialMessage.senderId || data.customerId,
@@ -38,46 +38,46 @@ export class SupportTicketRepository {
       });
     }
 
-    return this.findTicketById(id);
+    return await this.findTicketById(id);
   }
 
-  findTicketById(id) {
-    const row = this.db.queryOne('SELECT * FROM support_tickets WHERE id = ?', [id]);
+  async findTicketById(id) {
+    const row = await this.db.queryOne('SELECT * FROM support_tickets WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapTicketRow(row);
   }
 
-  findTicketsByCustomer(customerId) {
-    const rows = this.db.query(
+  async findTicketsByCustomer(customerId) {
+    const rows = await this.db.query(
       'SELECT * FROM support_tickets WHERE customer_id = ? ORDER BY updated_at DESC',
       [customerId]
     );
     return rows.map(r => this.mapTicketRow(r));
   }
 
-  findTicketsByMerchant(merchantId) {
-    const rows = this.db.query(
+  async findTicketsByMerchant(merchantId) {
+    const rows = await this.db.query(
       'SELECT * FROM support_tickets WHERE merchant_id = ? ORDER BY updated_at DESC',
       [merchantId]
     );
     return rows.map(r => this.mapTicketRow(r));
   }
 
-  updateTicketStatus(ticketId, status) {
+  async updateTicketStatus(ticketId, status) {
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?',
       [status, now, ticketId]
     );
-    return this.findTicketById(ticketId);
+    return await this.findTicketById(ticketId);
   }
 
-  addMessage(data) {
+  async addMessage(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const attachments = typeof data.attachments === 'object' ? JSON.stringify(data.attachments) : (data.attachments || '[]');
 
-    this.db.execute(`
+    await this.db.execute(`
       INSERT INTO ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -91,22 +91,22 @@ export class SupportTicketRepository {
     ]);
 
     // Update ticket updated_at
-    this.db.execute(
+    await this.db.execute(
       'UPDATE support_tickets SET updated_at = ? WHERE id = ?',
       [now, data.ticketId]
     );
 
-    return this.findMessageById(id);
+    return await this.findMessageById(id);
   }
 
-  findMessageById(id) {
-    const row = this.db.queryOne('SELECT * FROM ticket_messages WHERE id = ?', [id]);
+  async findMessageById(id) {
+    const row = await this.db.queryOne('SELECT * FROM ticket_messages WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapMessageRow(row);
   }
 
-  findMessagesByTicket(ticketId) {
-    const rows = this.db.query(
+  async findMessagesByTicket(ticketId) {
+    const rows = await this.db.query(
       'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC',
       [ticketId]
     );

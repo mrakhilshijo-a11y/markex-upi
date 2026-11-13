@@ -51,7 +51,7 @@ export function registerPollerRoutes(server, ctx) {
       }
       deviceMerchantId = device.merchant_id;
       const activeAcc = ctx.accountRepo
-        ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
+        ? await ctx.accountRepo.findActiveForMerchant(device.merchant_id)
         : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
       if (activeAcc) deviceAccountId = activeAcc.id || activeAcc.receiving_account_id || activeAcc.account_id;
     }
@@ -140,7 +140,7 @@ export function registerPollerRoutes(server, ctx) {
         return;
       }
       const activeAcc = ctx.accountRepo
-        ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
+        ? await ctx.accountRepo.findActiveForMerchant(device.merchant_id)
         : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
       if (activeAcc) deviceAccountId = activeAcc.id || activeAcc.receiving_account_id || activeAcc.account_id;
     }
@@ -220,7 +220,7 @@ export function registerPollerRoutes(server, ctx) {
       return;
     }
 
-    const pipeResult = ctx.pipeline.process({
+    const pipeResult = await ctx.pipeline.process({
       source: body.source,
       rawText,
       sender,
@@ -297,10 +297,10 @@ export function registerPollerRoutes(server, ctx) {
       pipeResult.amountPaise &&
       ctx.sessionRepo && ctx.attributionEngine
     ) {
-      const liveSession = ctx.sessionRepo.findCurrentActiveOrProcessing(body.receivingAccountId);
+      const liveSession = await ctx.sessionRepo.findCurrentActiveOrProcessing(body.receivingAccountId);
       if (!liveSession) {
         try {
-          const lateResult = ctx.attributionEngine.processObservation({
+          const lateResult = await ctx.attributionEngine.processObservation({
             source: body.source || 'SMS_GATEWAY',
             receivingAccountId: body.receivingAccountId,
             amountPaise: pipeResult.amountPaise,
@@ -382,7 +382,7 @@ export function registerPollerRoutes(server, ctx) {
       `, [deviceId, merchantId, deviceName, deviceModel, signingKey, nowIso, nowIso]);
 
       if (ctx.auditRepo) {
-        ctx.auditRepo.log({
+        await ctx.auditRepo.log({
           merchantId,
           entityType: 'ANDROID_DEVICE',
           entityId: deviceId,
@@ -466,7 +466,7 @@ export function registerPollerRoutes(server, ctx) {
     let receivingAccountId = body.receivingAccountId;
     if (!receivingAccountId) {
       const activeAccount = ctx.accountRepo
-        ? ctx.accountRepo.findActiveForMerchant(device.merchant_id)
+        ? await ctx.accountRepo.findActiveForMerchant(device.merchant_id)
         : ctx.db.queryOne('SELECT id FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1', [device.merchant_id]);
       receivingAccountId = activeAccount?.id || '00000000-0000-0000-0000-000000000002';
     }
@@ -552,7 +552,7 @@ export function registerPollerRoutes(server, ctx) {
       return;
     }
 
-    const pipeResult = ctx.pipeline.process({
+    const pipeResult = await ctx.pipeline.process({
       source: 'SMS',
       rawText,
       sender: body.sender || req.headers['x-sender'] || body.rawNotification?.package,
@@ -638,10 +638,10 @@ export function registerPollerRoutes(server, ctx) {
       (pipeResult.amountPaise || amountPaise) &&
       ctx.sessionRepo && ctx.attributionEngine
     ) {
-      const liveSession = ctx.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
+      const liveSession = await ctx.sessionRepo.findCurrentActiveOrProcessing(receivingAccountId);
       if (!liveSession) {
         try {
-          const lateResult = ctx.attributionEngine.processObservation({
+          const lateResult = await ctx.attributionEngine.processObservation({
             source: 'ANDROID_OBSERVER',
             receivingAccountId,
             amountPaise: pipeResult.amountPaise || amountPaise,
@@ -706,8 +706,8 @@ export function registerPollerRoutes(server, ctx) {
 
   // --- MERCHANT ADMIN: SMS GATEWAY PAIRING QR CODE & STATUS ---
   server.get('/api/v1/admin/sms-gateway/pair-qr', async (req, res) => {
-    let merchant = req.query.merchantId ? (ctx.merchantRepo ? ctx.merchantRepo.findById(req.query.merchantId) : null) : null;
-    if (!merchant && ctx.merchantRepo) merchant = ctx.merchantRepo.getDefault ? ctx.merchantRepo.getDefault() : (ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || ctx.merchantRepo.findAll()[0]);
+    let merchant = req.query.merchantId ? (ctx.merchantRepo ? await ctx.merchantRepo.findById(req.query.merchantId) : null) : null;
+    if (!merchant && ctx.merchantRepo) merchant = ctx.merchantRepo.getDefault ? await ctx.merchantRepo.getDefault() : (await ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || await ctx.merchantRepo.findAll()[0]);
     const merchantId = merchant ? merchant.id : (req.query.merchantId || '00000000-0000-0000-0000-000000000001');
 
     // Canonical runtime URL derivation (Part C2)
@@ -777,8 +777,8 @@ export function registerPollerRoutes(server, ctx) {
 
   // GET /api/v1/admin/sms-gateway/devices
   server.get('/api/v1/admin/sms-gateway/devices', async (req, res) => {
-    let merchant = req.query.merchantId ? (ctx.merchantRepo ? ctx.merchantRepo.findById(req.query.merchantId) : null) : null;
-    if (!merchant && ctx.merchantRepo) merchant = ctx.merchantRepo.getDefault ? ctx.merchantRepo.getDefault() : (ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || ctx.merchantRepo.findAll()[0]);
+    let merchant = req.query.merchantId ? (ctx.merchantRepo ? await ctx.merchantRepo.findById(req.query.merchantId) : null) : null;
+    if (!merchant && ctx.merchantRepo) merchant = ctx.merchantRepo.getDefault ? await ctx.merchantRepo.getDefault() : (await ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || await ctx.merchantRepo.findAll()[0]);
     const merchantId = merchant ? merchant.id : (req.query.merchantId || '00000000-0000-0000-0000-000000000001');
 
     const rawDevices = ctx.db.query(`

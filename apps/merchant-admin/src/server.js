@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDatabase, MerchantRepository, SupportTicketRepository } from '@youpi/db';
-import { getAdminToken, safeEqual } from '@youpi/common';
+import { getAdminToken, safeEqual, loadRootEnv } from '@youpi/common';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,15 +45,7 @@ function sanitizedForwardHeaders(req, targetHost) {
   return headers;
 }
 
-// In production, reliably ensure environment variables from .env are loaded if not already provided
-if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'function') {
-  try {
-    const rootEnv = path.resolve(__dirname, '../../../.env');
-    if (fs.existsSync(rootEnv)) {
-      process.loadEnvFile(rootEnv);
-    }
-  } catch {}
-}
+loadRootEnv(path.resolve(__dirname, '../../..'));
 
 export class AdminServer {
   /**
@@ -118,9 +110,9 @@ export class AdminServer {
           res.end(JSON.stringify({ error: 'Unauthorized', code: 'AUTH_REQUIRED' }));
           return;
         }
-        const merchants = this.merchantRepo.findAll();
+        const merchants = await this.merchantRepo.findAll();
         const mId = merchants[0]?.id || '00000000-0000-0000-0000-000000000001';
-        const tickets = this.ticketRepo.findTicketsByMerchant(mId);
+        const tickets = await this.ticketRepo.findTicketsByMerchant(mId);
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -203,7 +195,9 @@ export class AdminServer {
       if (pathname.startsWith('/api/')) {
         const targetUrl = new URL(req.url, this.apiBaseUrl);
         const requestClient = targetUrl.protocol === 'https:' ? https : http;
-        const defaultMerchant = this.merchantRepo.getDefault ? this.merchantRepo.getDefault() : (this.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || this.merchantRepo.findAll()[0]);
+        const defaultMerchant = this.merchantRepo.getDefault
+          ? await this.merchantRepo.getDefault()
+          : (await this.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || (await this.merchantRepo.findAll())[0]);
         const defaultMerchantId = defaultMerchant?.id || '00000000-0000-0000-0000-000000000001';
         const proxyReq = requestClient.request({
           hostname: targetUrl.hostname,

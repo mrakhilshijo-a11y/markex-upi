@@ -132,9 +132,9 @@ describe('@youpi/core Unit & Integration Tests', () => {
     let attributionEngine;
     let emittedEvents;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       db = new Database({ inMemory: true });
-      const seed = runMigrations(db);
+      const seed = await runMigrations(db);
       defaultMerchant = seed.defaultMerchant;
       receivingAccount = { id: '00000000-0000-0000-0000-000000000002' };
 
@@ -156,21 +156,21 @@ describe('@youpi/core Unit & Integration Tests', () => {
       });
     });
 
-    afterEach(() => {
-      db.close();
+    afterEach(async () => {
+      await db.close();
     });
 
-    test('attributes matching observation to active processing session', () => {
+    test('attributes matching observation to active processing session', async () => {
       // 1. Create and activate session for ₹200
-      const session = sessionRepo.create({
+      const session = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-101',
         amountPaise: 20000n
       });
 
-      sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id, 300000);
-      sessionRepo.transitionToProcessing(session.id, 30000);
+      await sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id, 300000);
+      await sessionRepo.transitionToProcessing(session.id, 30000);
 
       // 2. Normalize and ingest observation for ₹200
       const normObs = ObservationNormalizer.normalize({
@@ -187,7 +187,7 @@ describe('@youpi/core Unit & Integration Tests', () => {
       assert.equal(result.paymentSessionId, session.id);
 
       // Verify session updated to SUCCESS in DB
-      const updatedSession = sessionRepo.findById(session.id);
+      const updatedSession = await sessionRepo.findById(session.id);
       assert.equal(updatedSession.status, PaymentStatus.OBSERVED_SUCCESS);
       assert.ok(updatedSession.completedAt);
 
@@ -195,15 +195,15 @@ describe('@youpi/core Unit & Integration Tests', () => {
       assert.ok(emittedEvents.some(e => e.event === 'PAYMENT.OBSERVED_SUCCESS'));
     });
 
-    test('deduplicates multi-channel observations (SMS + Gmail)', () => {
-      const session = sessionRepo.create({
+    test('deduplicates multi-channel observations (SMS + Gmail)', async () => {
+      const session = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-DEDUP',
         amountPaise: 20000n
       });
-      sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id, 300000);
-      sessionRepo.transitionToProcessing(session.id, 30000);
+      await sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id, 300000);
+      await sessionRepo.transitionToProcessing(session.id, 30000);
 
       // Method 1: SMS observes ₹200 with UTR111 -> Level 1 (L1)
       const obsSms = ObservationNormalizer.normalize({
@@ -243,41 +243,41 @@ describe('@youpi/core Unit & Integration Tests', () => {
       assert.equal(upgradeEvents.length, 1);
     });
 
-    test('CRITICAL INVARIANT: Late observation does not attach to a new queued customer', () => {
+    test('CRITICAL INVARIANT: Late observation does not attach to a new queued customer', async () => {
       // Customer A creates ₹200 session, but it expires
-      const customerA = customerRepo.create({
+      const customerA = await customerRepo.create({
         merchantId: defaultMerchant.id,
         phoneNumber: '9876500001',
         fullName: 'Customer A',
         password: 'PassWord1!'
       });
 
-      const sessionA = sessionRepo.create({
+      const sessionA = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         customerId: customerA.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-EXPIRED-A',
         amountPaise: 20000n
       });
-      sessionRepo.acquireSlotAtomic(sessionA.id, receivingAccount.id, 300000);
-      sessionRepo.transitionToTerminal(sessionA.id, PaymentStatus.EXPIRED);
+      await sessionRepo.acquireSlotAtomic(sessionA.id, receivingAccount.id, 300000);
+      await sessionRepo.transitionToTerminal(sessionA.id, PaymentStatus.EXPIRED);
 
       // Customer B arrives for another ₹200 and becomes ACTIVE
-      const customerB = customerRepo.create({
+      const customerB = await customerRepo.create({
         merchantId: defaultMerchant.id,
         phoneNumber: '9876500002',
         fullName: 'Customer B',
         password: 'PassWord2!'
       });
 
-      const sessionB = sessionRepo.create({
+      const sessionB = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         customerId: customerB.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-ACTIVE-B',
         amountPaise: 20000n
       });
-      sessionRepo.acquireSlotAtomic(sessionB.id, receivingAccount.id, 300000);
+      await sessionRepo.acquireSlotAtomic(sessionB.id, receivingAccount.id, 300000);
 
       // Delayed observation arrives for ₹200 with timestamp corresponding to Customer A's window
       const lateObs = ObservationNormalizer.normalize({
@@ -298,9 +298,9 @@ describe('@youpi/core Unit & Integration Tests', () => {
       assert.equal(lateRes.ambiguous, true);
       assert.equal(lateRes.outcomeStatus, PaymentStatus.MANUAL_REVIEW);
 
-      const checkB = sessionRepo.findById(sessionB.id);
+      const checkB = await sessionRepo.findById(sessionB.id);
       assert.equal(checkB.status, PaymentStatus.MANUAL_REVIEW);
-      const checkA = sessionRepo.findById(sessionA.id);
+      const checkA = await sessionRepo.findById(sessionA.id);
       assert.equal(checkA.status, PaymentStatus.EXPIRED);
       assert.equal(emittedEvents.some(e => e.event === 'PAYMENT.OBSERVED_SUCCESS'), false);
     });
@@ -419,9 +419,9 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
     let attributionEngine;
     let emittedEvents;
 
-    beforeEach(() => {
+    beforeEach(async () => {
       db = new Database({ inMemory: true });
-      const seed = runMigrations(db);
+      const seed = await runMigrations(db);
       defaultMerchant = seed.defaultMerchant;
       receivingAccount = { id: '00000000-0000-0000-0000-000000000002' };
 
@@ -443,8 +443,8 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
       });
     });
 
-    afterEach(() => {
-      db.close();
+    afterEach(async () => {
+      await db.close();
     });
     test('strictly forbids all transitions out of terminal states in the state machine', () => {
       const terminalStates = [
@@ -484,7 +484,7 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
       }
     });
 
-    test('acquireSlotAtomic rejects sessions in terminal status', () => {
+    test('acquireSlotAtomic rejects sessions in terminal status', async () => {
       const testCases = [
         PaymentStatus.SUCCESS,
         PaymentStatus.FAILED,
@@ -493,7 +493,7 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
       ];
 
       for (const status of testCases) {
-        const session = sessionRepo.create({
+        const session = await sessionRepo.create({
           merchantId: defaultMerchant.id,
           receivingAccountId: receivingAccount.id,
           orderId: `ORD-TERMINAL-${status}`,
@@ -501,27 +501,27 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
         });
 
         if (status === PaymentStatus.CANCELLED) {
-          sessionRepo.transitionToTerminal(session.id, PaymentStatus.CANCELLED);
+          await sessionRepo.transitionToTerminal(session.id, PaymentStatus.CANCELLED);
         } else {
-          sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id);
-          sessionRepo.transitionToTerminal(session.id, status);
+          await sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id);
+          await sessionRepo.transitionToTerminal(session.id, status);
         }
 
-        const terminalSession = sessionRepo.findById(session.id);
+        const terminalSession = await sessionRepo.findById(session.id);
         assert.equal(terminalSession.status, status);
 
         assert.throws(
-          () => sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id),
+          () => await sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id),
           /Cannot acquire slot for session in terminal status|Illegal payment state transition/
         );
 
         // Status must remain terminal in database
-        const afterAttempt = sessionRepo.findById(session.id);
+        const afterAttempt = await sessionRepo.findById(session.id);
         assert.equal(afterAttempt.status, status);
       }
     });
 
-    test('recordVerificationSource ignores terminal non-success sessions and preserves terminal status', () => {
+    test('recordVerificationSource ignores terminal non-success sessions and preserves terminal status', async () => {
       const terminalStatuses = [
         PaymentStatus.FAILED,
         PaymentStatus.EXPIRED,
@@ -529,123 +529,123 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
       ];
 
       for (const status of terminalStatuses) {
-        const session = sessionRepo.create({
+        const session = await sessionRepo.create({
           merchantId: defaultMerchant.id,
           receivingAccountId: receivingAccount.id,
           orderId: `ORD-VERIFY-${status}`,
           amountPaise: 40000n
         });
         if (status === PaymentStatus.CANCELLED) {
-          sessionRepo.transitionToTerminal(session.id, PaymentStatus.CANCELLED);
+          await sessionRepo.transitionToTerminal(session.id, PaymentStatus.CANCELLED);
         } else {
-          sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id);
-          sessionRepo.transitionToTerminal(session.id, status);
+          await sessionRepo.acquireSlotAtomic(session.id, receivingAccount.id);
+          await sessionRepo.transitionToTerminal(session.id, status);
         }
 
         const res = sessionRepo.recordVerificationSource(session.id, ObserverSource.GMAIL, 'obs_fake_123', { finalizeSuccess: true });
         assert.equal(res.isFirstSuccess, false);
 
         // Status in database must still be the terminal status
-        const unchanged = sessionRepo.findById(session.id);
+        const unchanged = await sessionRepo.findById(session.id);
         assert.equal(unchanged.status, status);
       }
     });
 
-    test('transitionToProcessing rejects terminal sessions and non-active sessions', () => {
+    test('transitionToProcessing rejects terminal sessions and non-active sessions', async () => {
       // 1. INITIATED session rejects transition to PROCESSING
-      const initiated = sessionRepo.create({
+      const initiated = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-INITIATED',
         amountPaise: 15000n
       });
       assert.throws(
-        () => sessionRepo.transitionToProcessing(initiated.id),
+        () => await sessionRepo.transitionToProcessing(initiated.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
 
       // 2. QUEUED session rejects transition to PROCESSING
-      const activeSess = sessionRepo.create({
+      const activeSess = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-ACTIVE',
         amountPaise: 15000n
       });
-      sessionRepo.acquireSlotAtomic(activeSess.id, receivingAccount.id);
+      await sessionRepo.acquireSlotAtomic(activeSess.id, receivingAccount.id);
 
-      const queuedSess = sessionRepo.create({
+      const queuedSess = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-QUEUED',
         amountPaise: 15000n
       });
-      sessionRepo.acquireSlotAtomic(queuedSess.id, receivingAccount.id);
-      assert.equal(sessionRepo.findById(queuedSess.id).status, PaymentStatus.QUEUED);
+      await sessionRepo.acquireSlotAtomic(queuedSess.id, receivingAccount.id);
+      assert.equal(await sessionRepo.findById(queuedSess.id).status, PaymentStatus.QUEUED);
 
       assert.throws(
-        () => sessionRepo.transitionToProcessing(queuedSess.id),
+        () => await sessionRepo.transitionToProcessing(queuedSess.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
 
       // 3. SUCCESS session rejects transition to PROCESSING
-      sessionRepo.transitionToTerminal(activeSess.id, PaymentStatus.SUCCESS);
+      await sessionRepo.transitionToTerminal(activeSess.id, PaymentStatus.SUCCESS);
       assert.throws(
-        () => sessionRepo.transitionToProcessing(activeSess.id),
+        () => await sessionRepo.transitionToProcessing(activeSess.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
 
       // 4. CANCELLED session rejects transition to PROCESSING
-      const cancelled = sessionRepo.create({
+      const cancelled = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-CANCELLED',
         amountPaise: 15000n
       });
-      sessionRepo.transitionToTerminal(cancelled.id, PaymentStatus.CANCELLED);
+      await sessionRepo.transitionToTerminal(cancelled.id, PaymentStatus.CANCELLED);
       assert.throws(
-        () => sessionRepo.transitionToProcessing(cancelled.id),
+        () => await sessionRepo.transitionToProcessing(cancelled.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
 
       // 5. EXPIRED session rejects transition to PROCESSING
-      const expired = sessionRepo.create({
+      const expired = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-EXPIRED',
         amountPaise: 15000n
       });
-      sessionRepo.acquireSlotAtomic(expired.id, receivingAccount.id);
-      sessionRepo.transitionToTerminal(expired.id, PaymentStatus.EXPIRED);
+      await sessionRepo.acquireSlotAtomic(expired.id, receivingAccount.id);
+      await sessionRepo.transitionToTerminal(expired.id, PaymentStatus.EXPIRED);
       assert.throws(
-        () => sessionRepo.transitionToProcessing(expired.id),
+        () => await sessionRepo.transitionToProcessing(expired.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
 
       // 6. FAILED session rejects transition to PROCESSING
-      const failed = sessionRepo.create({
+      const failed = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         receivingAccountId: receivingAccount.id,
         orderId: 'ORD-PROC-FAILED',
         amountPaise: 15000n
       });
-      sessionRepo.acquireSlotAtomic(failed.id, receivingAccount.id);
-      sessionRepo.transitionToTerminal(failed.id, PaymentStatus.FAILED);
+      await sessionRepo.acquireSlotAtomic(failed.id, receivingAccount.id);
+      await sessionRepo.transitionToTerminal(failed.id, PaymentStatus.FAILED);
       assert.throws(
-        () => sessionRepo.transitionToProcessing(failed.id),
+        () => await sessionRepo.transitionToProcessing(failed.id),
         /Cannot transition to PROCESSING from status|Illegal payment state transition/
       );
     });
 
 
-    test('AttributionEngine does not revive expired session to SUCCESS and creates support ticket', () => {
-      const customer = customerRepo.create({
+    test('AttributionEngine does not revive expired session to SUCCESS and creates support ticket', async () => {
+      const customer = await customerRepo.create({
         merchantId: defaultMerchant.id,
         phoneNumber: '9123456780',
         fullName: 'Late Paying User',
         password: 'Password9!'
       });
 
-      const expiredSession = sessionRepo.create({
+      const expiredSession = await sessionRepo.create({
         merchantId: defaultMerchant.id,
         customerId: customer.id,
         receivingAccountId: receivingAccount.id,
@@ -653,8 +653,8 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
         amountPaise: 75000n
       });
 
-      sessionRepo.acquireSlotAtomic(expiredSession.id, receivingAccount.id);
-      sessionRepo.transitionToTerminal(expiredSession.id, PaymentStatus.EXPIRED);
+      await sessionRepo.acquireSlotAtomic(expiredSession.id, receivingAccount.id);
+      await sessionRepo.transitionToTerminal(expiredSession.id, PaymentStatus.EXPIRED);
 
       const lateObs = ObservationNormalizer.normalize({
         source: ObserverSource.GMAIL,
@@ -673,11 +673,11 @@ describe('Issue #4: Terminal State Invariants and Re-activation Guards', () => {
       assert.equal(result.outcomeStatus, ObservationAttributionStatus.LATE_UNMATCHED);
 
       // Verify the session status in DB is STILL EXPIRED (not SUCCESS)
-      const freshSession = sessionRepo.findById(expiredSession.id);
+      const freshSession = await sessionRepo.findById(expiredSession.id);
       assert.equal(freshSession.status, PaymentStatus.EXPIRED);
 
       // Verify support ticket was created
-      const tickets = ticketRepo.findTicketsByCustomer(customer.id);
+      const tickets = await ticketRepo.findTicketsByCustomer(customer.id);
       assert.ok(tickets.length >= 1);
       const ticket = tickets.find(t => t.paymentId === expiredSession.id);
       assert.ok(ticket);

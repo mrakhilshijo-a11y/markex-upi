@@ -26,7 +26,7 @@ export class CustomerRepository {
    *   status?: string
    * }} data
    */
-  create(data) {
+  async create(data) {
     const id = data.id || crypto.randomUUID();
     const name = String(data.name || data.fullName || '').trim();
     const mobileNumber = normalizeMobile(data.mobileNumber || data.phoneNumber);
@@ -63,7 +63,7 @@ export class CustomerRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       name,
       email,
@@ -77,7 +77,7 @@ export class CustomerRepository {
       now
     ]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
   /**
@@ -85,9 +85,9 @@ export class CustomerRepository {
    * @param {string} id
    * @returns {any | null}
    */
-  findById(id) {
+  async findById(id) {
     if (!id) return null;
-    const row = this.db.queryOne('SELECT * FROM customers WHERE id = ?', [id]);
+    const row = await this.db.queryOne('SELECT * FROM customers WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapRow(row);
   }
@@ -97,10 +97,10 @@ export class CustomerRepository {
    * @param {string} email
    * @returns {any | null}
    */
-  findByEmail(email) {
+  async findByEmail(email) {
     const normalized = normalizeEmail(email);
     if (!normalized) return null;
-    const row = this.db.queryOne('SELECT * FROM customers WHERE email = ?', [normalized]);
+    const row = await this.db.queryOne('SELECT * FROM customers WHERE email = ?', [normalized]);
     if (!row) return null;
     return this.mapRow(row);
   }
@@ -110,11 +110,11 @@ export class CustomerRepository {
    * @param {string} mobileNumber
    * @returns {any | null}
    */
-  findByMobile(mobileNumber) {
+  async findByMobile(mobileNumber) {
     const normalized = normalizeMobile(mobileNumber);
     if (!normalized) return null;
     const clean10 = normalized.slice(-10);
-    const row = this.db.queryOne(
+    const row = await this.db.queryOne(
       'SELECT * FROM customers WHERE mobile_number = ? OR mobile_number = ? OR mobile_number = ? OR mobile_number LIKE ?',
       [normalized, clean10, '+91' + clean10, '%' + clean10]
     );
@@ -128,9 +128,9 @@ export class CustomerRepository {
    * @param {string} [arg2] optional phoneNumber if merchantId was first
    * @returns {any | null}
    */
-  findByPhone(arg1, arg2) {
+  async findByPhone(arg1, arg2) {
     const phone = arg2 || arg1;
-    return this.findByMobile(phone);
+    return await this.findByMobile(phone);
   }
 
   /**
@@ -138,15 +138,15 @@ export class CustomerRepository {
    * @param {string} identifier
    * @returns {any | null}
    */
-  findByIdentifier(identifier) {
+  async findByIdentifier(identifier) {
     if (!identifier) return null;
     const trimmed = String(identifier).trim();
     if (trimmed.includes('@')) {
-      return this.findByEmail(trimmed);
+      return await this.findByEmail(trimmed);
     }
-    const asMobile = this.findByMobile(trimmed);
+    const asMobile = await this.findByMobile(trimmed);
     if (asMobile) return asMobile;
-    return this.findByEmail(trimmed);
+    return await this.findByEmail(trimmed);
   }
 
   /**
@@ -156,7 +156,7 @@ export class CustomerRepository {
    * @param {string} [arg3] Optional password if merchantId was first
    * @returns {any | null} Safe customer profile or null
    */
-  verifyCredentials(arg1, arg2, arg3) {
+  async verifyCredentials(arg1, arg2, arg3) {
     let identifier = arg1;
     let password = arg2;
     if (arg3 !== undefined) {
@@ -166,7 +166,7 @@ export class CustomerRepository {
 
     if (!identifier || !password) return null;
 
-    const customer = this.findByIdentifier(identifier);
+    const customer = await this.findByIdentifier(identifier);
     if (!customer) return null;
 
     if (customer.status !== 'ACTIVE') return null;
@@ -177,7 +177,7 @@ export class CustomerRepository {
     // Update last_login_at
     const now = new Date().toISOString();
     try {
-      this.db.execute('UPDATE customers SET last_login_at = ?, updated_at = ? WHERE id = ?', [now, now, customer.id]);
+      await this.db.execute('UPDATE customers SET last_login_at = ?, updated_at = ? WHERE id = ?', [now, now, customer.id]);
     } catch {}
 
     const { passwordHash, ...safeCustomer } = customer;
@@ -192,15 +192,15 @@ export class CustomerRepository {
    * @param {string} expiresAt ISO String
    * @returns {any | null}
    */
-  setOtp(mobileNumber, otpCode, expiresAt) {
+  async setOtp(mobileNumber, otpCode, expiresAt) {
     const normalized = normalizeMobile(mobileNumber);
     if (!normalized) return null;
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE customers SET otp_code = ?, otp_expires_at = ?, otp_attempts = 0, updated_at = ? WHERE mobile_number = ?',
       [encryptAtRest(otpCode), expiresAt, now, normalized]
     );
-    return this.findByMobile(normalized);
+    return await this.findByMobile(normalized);
   }
 
   /**
@@ -211,10 +211,10 @@ export class CustomerRepository {
    * @param {string} otpCode
    * @returns {any | null}
    */
-  verifyOtp(mobileNumber, otpCode) {
+  async verifyOtp(mobileNumber, otpCode) {
     const normalized = normalizeMobile(mobileNumber);
     if (!normalized || !otpCode) return null;
-    const customer = this.findByMobile(normalized);
+    const customer = await this.findByMobile(normalized);
     if (!customer) return null;
 
     // A 6-digit code has a 10^6 keyspace and a 5 minute lifetime, so without an attempt
@@ -227,7 +227,7 @@ export class CustomerRepository {
     // `!==` short-circuits on the first differing character; use a constant-time compare.
     const matches = storedOtp ? safeEqual(storedOtp, submitted) : false;
     if (!storedOtp || !matches) {
-      this.db.execute(
+      await this.db.execute(
         'UPDATE customers SET otp_attempts = ?, updated_at = ? WHERE id = ?',
         [attempts + 1, new Date().toISOString(), customer.id]
       );
@@ -238,27 +238,27 @@ export class CustomerRepository {
     }
 
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE customers SET otp_code = NULL, otp_expires_at = NULL, otp_attempts = 0, is_phone_verified = 1, last_login_at = ?, updated_at = ? WHERE id = ?',
       [now, now, customer.id]
     );
-    return this.findById(customer.id);
+    return await this.findById(customer.id);
   }
 
   /**
    * Completely wipes all customer identity records.
    */
-  clearAll() {
-    this.db.execute('DELETE FROM customer_sessions');
-    this.db.execute('DELETE FROM customers');
+  async clearAll() {
+    await this.db.execute('DELETE FROM customer_sessions');
+    await this.db.execute('DELETE FROM customers');
   }
 
   /**
    * Returns count of customers in the database.
    * @returns {number}
    */
-  count() {
-    const row = this.db.queryOne('SELECT COUNT(*) as c FROM customers');
+  async count() {
+    const row = await this.db.queryOne('SELECT COUNT(*) as c FROM customers');
     return row?.c || 0;
   }
 
@@ -275,30 +275,30 @@ export class CustomerRepository {
    * @param {{ lastDevice?: string, deviceInfo?: string }} [options={}]
    * @returns {any | null}
    */
-  banCustomer(id, reason = 'FRAUDULENT_PAYMENT_INJECTION', options = {}) {
+  async banCustomer(id, reason = 'FRAUDULENT_PAYMENT_INJECTION', options = {}) {
     if (!id) return null;
     const releasedAccounts = [];
-    this.db.transaction(() => {
+    await this.db.transaction(async () => {
       const now = new Date().toISOString();
       const lastDevice = options.lastDevice || options.deviceInfo || null;
-      this.db.execute(
+      await this.db.execute(
         "UPDATE customers SET status = 'BANNED', ban_reason = ?, banned_at = ?, last_device = COALESCE(?, last_device), updated_at = ? WHERE id = ?",
         [reason, now, lastDevice, now, id]
       );
 
       // Immediately transition all existing non-terminal sessions for this customer to EXPIRED
-      const activeSessions = this.db.query(
+      const activeSessions = await this.db.query(
         "SELECT id, receiving_account_id FROM payment_sessions WHERE customer_id = ? AND status IN ('INITIATED', 'QUEUED', 'ACTIVE', 'PROCESSING')",
         [id]
       );
       if (activeSessions.length > 0) {
-        this.db.execute(
+        await this.db.execute(
           "UPDATE payment_sessions SET status = 'EXPIRED', completed_at = ?, updated_at = ? WHERE customer_id = ? AND status IN ('INITIATED', 'QUEUED', 'ACTIVE', 'PROCESSING')",
           [now, now, id]
         );
         for (const s of activeSessions) {
           if (s.receiving_account_id) {
-            this.db.execute(
+            await this.db.execute(
               "UPDATE payment_receiving_accounts SET is_slot_busy = 0, current_active_session_id = NULL, updated_at = ? WHERE id = ? AND current_active_session_id = ?",
               [now, s.receiving_account_id, s.id]
             );
@@ -314,7 +314,7 @@ export class CustomerRepository {
       }
     }
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
   /**
@@ -322,14 +322,14 @@ export class CustomerRepository {
    * @param {string} id
    * @returns {any | null}
    */
-  unbanCustomer(id) {
+  async unbanCustomer(id) {
     if (!id) return null;
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       "UPDATE customers SET status = 'ACTIVE', ban_reason = NULL, unbanned_at = ?, updated_at = ? WHERE id = ?",
       [now, now, id]
     );
-    return this.findById(id);
+    return await this.findById(id);
   }
 
   /**
@@ -337,9 +337,9 @@ export class CustomerRepository {
    * @param {string} id
    * @returns {boolean}
    */
-  isBanned(id) {
+  async isBanned(id) {
     if (!id) return false;
-    const customer = this.findById(id);
+    const customer = await this.findById(id);
     return customer?.status === 'BANNED';
   }
 
@@ -365,7 +365,7 @@ export class CustomerRepository {
    * }} data
    * @returns {any}
    */
-  createSecurityEvent(data) {
+  async createSecurityEvent(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const sql = `
@@ -376,7 +376,7 @@ export class CustomerRepository {
         fraud_reason, metadata, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.merchantId || null,
       data.customerId || null,
@@ -395,7 +395,7 @@ export class CustomerRepository {
       typeof data.metadata === 'object' ? JSON.stringify(data.metadata) : (data.metadata || '{}'),
       now
     ]);
-    return this.db.queryOne('SELECT * FROM security_events WHERE id = ?', [id]);
+    return await this.db.queryOne('SELECT * FROM security_events WHERE id = ?', [id]);
   }
 
   /**
@@ -404,7 +404,7 @@ export class CustomerRepository {
    * @param {number} [limit=100]
    * @returns {any[]}
    */
-  getSecurityEvents(customerId = null, limit = 100) {
+  async getSecurityEvents(customerId = null, limit = 100) {
     const mapSecRow = (row) => {
       let meta = {};
       try { meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}); } catch {}
@@ -426,13 +426,13 @@ export class CustomerRepository {
     };
 
     if (customerId) {
-      const rows = this.db.query(
+      const rows = await this.db.query(
         'SELECT * FROM security_events WHERE customer_id = ? ORDER BY created_at DESC LIMIT ?',
         [customerId, limit]
       );
       return rows.map(mapSecRow);
     }
-    const rows = this.db.query(
+    const rows = await this.db.query(
       'SELECT se.*, c.name as customer_name, c.email as customer_email, c.mobile_number as customer_phone FROM security_events se LEFT JOIN customers c ON se.customer_id = c.id ORDER BY se.created_at DESC LIMIT ?',
       [limit]
     );
@@ -444,7 +444,7 @@ export class CustomerRepository {
    * @param {string} [searchQuery='']
    * @returns {any[]}
    */
-  findAllBanned(searchQuery = '') {
+  async findAllBanned(searchQuery = '') {
     let sql = `
       SELECT c.*,
              se.id as security_event_id,
@@ -474,7 +474,7 @@ export class CustomerRepository {
     }
     sql += ` GROUP BY c.id ORDER BY COALESCE(c.banned_at, c.updated_at) DESC`;
 
-    const rows = this.db.query(sql, params);
+    const rows = await this.db.query(sql, params);
     return rows.map(r => ({
       id: r.id,
       name: r.name,
@@ -499,22 +499,22 @@ export class CustomerRepository {
    * @param {string} customerId
    * @returns {any | null}
    */
-  getBanEvidence(customerId) {
-    const customer = this.findById(customerId);
+  async getBanEvidence(customerId) {
+    const customer = await this.findById(customerId);
     if (!customer) return null;
 
-    const events = this.getSecurityEvents(customerId, 50);
+    const events = await this.getSecurityEvents(customerId, 50);
     const triggerEvent = events.find(e => e.eventType === 'FRAUDULENT_PAYMENT_INJECTION') || events[0] || null;
 
     let session = null;
     if (triggerEvent?.paymentSessionId || triggerEvent?.payment_session_id) {
       const sessId = triggerEvent.paymentSessionId || triggerEvent.payment_session_id;
-      session = this.db.queryOne('SELECT * FROM payment_sessions WHERE id = ?', [sessId]);
+      session = await this.db.queryOne('SELECT * FROM payment_sessions WHERE id = ?', [sessId]);
     } else {
-      session = this.db.queryOne('SELECT * FROM payment_sessions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 1', [customerId]);
+      session = await this.db.queryOne('SELECT * FROM payment_sessions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 1', [customerId]);
     }
 
-    const allSessions = this.db.query(
+    const allSessions = await this.db.query(
       'SELECT status, amount_paise FROM payment_sessions WHERE customer_id = ?',
       [customerId]
     );

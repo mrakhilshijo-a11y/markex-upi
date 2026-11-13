@@ -22,7 +22,7 @@ describe('Webhook Engine Integration Tests', () => {
 
   before(async () => {
     db = new Database({ inMemory: true });
-    runMigrations(db);
+    await runMigrations(db);
     merchantRepo = new MerchantRepository(db);
     sessionRepo = new PaymentSessionRepository(db);
 
@@ -62,11 +62,11 @@ describe('Webhook Engine Integration Tests', () => {
 
   after(async () => {
     await new Promise(cb => receiverServer.close(cb));
-    db.close();
+    await db.close();
   });
 
   test('successfully dispatches HMAC-SHA256 signed webhook on payment event', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'Webhook Test Store',
       slug: 'webhook-store',
       contactEmail: 'store@example.com',
@@ -75,7 +75,7 @@ describe('Webhook Engine Integration Tests', () => {
       webhookSecret: 'test_secret_for_merchant_signatures_123'
     });
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'HOOK-ORD-001',
       amountPaise: 20000n
@@ -117,7 +117,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('carries the bank reference (UTR) from the attributed observation', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'UTR Store',
       slug: 'utr-store',
       contactEmail: 'utr@example.com',
@@ -126,7 +126,7 @@ describe('Webhook Engine Integration Tests', () => {
       webhookSecret: 'test_secret_for_utr_signatures_123'
     });
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'HOOK-ORD-UTR',
       amountPaise: 20000n,
@@ -148,7 +148,7 @@ describe('Webhook Engine Integration Tests', () => {
     receivedWebhooks = [];
     shouldReceiverFail = false;
 
-    const result = await webhookEngine.dispatch('SUCCESS', sessionRepo.findById(session.id));
+    const result = await webhookEngine.dispatch('SUCCESS', await sessionRepo.findById(session.id));
     assert.equal(result.delivered, true);
 
     const hook = receivedWebhooks.find(h => h.body.orderId === 'HOOK-ORD-UTR');
@@ -166,7 +166,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('records failure and supports retry on merchant HTTP 500 error', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'Failing Store',
       slug: 'failing-store',
       contactEmail: 'fail@example.com',
@@ -175,7 +175,7 @@ describe('Webhook Engine Integration Tests', () => {
       webhookSecret: 'secret_abc_123'
     });
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'HOOK-ORD-FAIL',
       amountPaise: 50000n
@@ -216,7 +216,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('a retried delivery keeps the timestamp and delivery id of the original body', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'Retry Consistency Store',
       slug: 'retry-consistency-store',
       contactEmail: 'retry@example.com',
@@ -225,7 +225,7 @@ describe('Webhook Engine Integration Tests', () => {
       webhookSecret: 'test_secret_for_retry_consistency_123'
     });
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'HOOK-ORD-RETRY-CONSISTENCY',
       amountPaise: 70000n
@@ -260,7 +260,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('persists delivery failure record when merchant webhookSecret is missing', async () => {
-    const merchantNoSecret = merchantRepo.create({
+    const merchantNoSecret = await merchantRepo.create({
       businessName: 'No Secret Store',
       slug: 'no-secret-store',
       contactEmail: 'nosecret@example.com',
@@ -271,7 +271,7 @@ describe('Webhook Engine Integration Tests', () => {
     // Explicitly set secret to empty string in DB to test missing secret guard
     db.execute("UPDATE merchants SET webhook_secret = '' WHERE id = ?", [merchantNoSecret.id]);
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchantNoSecret.id,
       orderId: 'HOOK-ORD-NO-SEC',
       amountPaise: 10000n
@@ -329,12 +329,12 @@ describe('Webhook Engine Integration Tests', () => {
         import { WebhookEngine } from '@youpi/core';
 
         const db = new Database({ dbPath: process.env.CRASH_DB_PATH });
-        runMigrations(db);
+        await runMigrations(db);
         const merchantRepo = new MerchantRepository(db);
         const sessionRepo = new PaymentSessionRepository(db);
         const webhookEngine = new WebhookEngine({ db, merchantRepo, maxRetries: 3 });
 
-        const merchant = merchantRepo.create({
+        const merchant = await merchantRepo.create({
           businessName: 'Crash Test Store',
           slug: 'crash-test-store',
           contactEmail: 'crash@example.com',
@@ -343,13 +343,13 @@ describe('Webhook Engine Integration Tests', () => {
           webhookSecret: 'crash_secret_key_123456'
         });
 
-        const session = sessionRepo.create({
+        const session = await sessionRepo.create({
           merchantId: merchant.id,
           orderId: 'HOOK-ORD-SIGKILL-86',
           amountPaise: 49900n
         });
-        sessionRepo.transitionToTerminal(session.id, 'SUCCESS');
-        const updatedSession = sessionRepo.findById(session.id);
+        await sessionRepo.transitionToTerminal(session.id, 'SUCCESS');
+        const updatedSession = await sessionRepo.findById(session.id);
 
         await webhookEngine.dispatch('SUCCESS', updatedSession);
       `;
@@ -402,7 +402,7 @@ describe('Webhook Engine Integration Tests', () => {
       assert.equal(preRow.attempt_count, 0);
 
       // Run startup recovery to reset in-flight leases and backfill any missing rows
-      const recovered = restartedWebhookEngine.recoverMissingDeliveries({ resetInFlight: true });
+      const recovered = await restartedWebhookEngine.recoverMissingDeliveries({ resetInFlight: true });
       assert.ok(recovered >= 1, 'recoverMissingDeliveries should reset the interrupted in-flight row');
 
       // Allow receiver to respond 200 OK and run retryPending()
@@ -429,7 +429,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('backfills and delivers webhook if process crashed between transitionToTerminal and dispatch (Issue #86)', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'Orphan Terminal Store',
       slug: 'orphan-terminal-store',
       contactEmail: 'orphan@example.com',
@@ -438,14 +438,14 @@ describe('Webhook Engine Integration Tests', () => {
       webhookSecret: 'orphan_secret_key_123456'
     });
 
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'HOOK-ORD-ORPHAN-86',
       amountPaise: 35000n
     });
     // Transition session to terminal state WITHOUT calling webhookEngine.dispatch()
     // (simulating crash right after DB commit of terminal state before event listener ran)
-    sessionRepo.transitionToTerminal(session.id, 'SUCCESS');
+    await sessionRepo.transitionToTerminal(session.id, 'SUCCESS');
 
     const beforeRow = db.queryOne('SELECT * FROM webhook_deliveries WHERE payment_id = ?', [session.id]);
     assert.equal(beforeRow, null);
@@ -468,7 +468,7 @@ describe('Webhook Engine Integration Tests', () => {
   });
 
   test('propagates UTR correctly from session or attributed observation', async () => {
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'UTR Test Store',
       slug: 'utr-store-propagation',
       contactEmail: 'utr@example.com',
@@ -478,7 +478,7 @@ describe('Webhook Engine Integration Tests', () => {
     });
 
     // 1. Direct UTR on session
-    const sessionDirect = sessionRepo.create({
+    const sessionDirect = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'ORD-UTR-DIRECT',
       amountPaise: 15000n
@@ -500,7 +500,7 @@ describe('Webhook Engine Integration Tests', () => {
       VALUES (?, ?, 'SMS', 30000, datetime('now'), '987654321098', 'fingerprint_test_utr')
     `, [obsId, accId]);
 
-    const sessionAttributed = sessionRepo.create({
+    const sessionAttributed = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'ORD-UTR-ATTRIB',
       amountPaise: 30000n
@@ -513,7 +513,7 @@ describe('Webhook Engine Integration Tests', () => {
     assert.equal(receivedWebhooks[0].body.utr, '987654321098');
 
     // 3. Missing / empty UTR falls back to null cleanly
-    const sessionMissing = sessionRepo.create({
+    const sessionMissing = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'ORD-UTR-NONE',
       amountPaise: 10000n
@@ -529,10 +529,10 @@ describe('Webhook Engine Integration Tests', () => {
 describe('Webhook retry claim lifetime', () => {
   function pendingDeliveries(count) {
     const db = new Database({ inMemory: true });
-    runMigrations(db);
+    await runMigrations(db);
     const sessionRepo = new PaymentSessionRepository(db);
     const merchantRepo = new MerchantRepository(db);
-    const merchant = merchantRepo.create({
+    const merchant = await merchantRepo.create({
       businessName: 'Retry claim store',
       slug: 'retry-claim-store',
       contactEmail: 'retry@example.com',
@@ -540,7 +540,7 @@ describe('Webhook retry claim lifetime', () => {
       webhookUrl: 'https://example.com/webhook',
       webhookSecret: 'synthetic-retry-claim-secret'
     });
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId: merchant.id,
       orderId: 'RETRY-CLAIM',
       amountPaise: 10000n
@@ -563,7 +563,7 @@ describe('Webhook retry claim lifetime', () => {
 
   test('overlapping sweeps send each due delivery once when a slow batch exceeds the claim lease', async (t) => {
     const { db, engine, otherEngine } = pendingDeliveries(10);
-    t.after(() => db.close());
+    t.after(() => await db.close());
     t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
     const sent = new Map();
     let requests = 0;
@@ -593,7 +593,7 @@ describe('Webhook retry claim lifetime', () => {
 
   test('a second worker can process waiting deliveries while the first request is in flight', async (t) => {
     const { db, engine, otherEngine } = pendingDeliveries(3);
-    t.after(() => db.close());
+    t.after(() => await db.close());
     let releaseFirst;
     const firstResponse = new Promise(resolve => { releaseFirst = resolve; });
     let requests = 0;
@@ -616,7 +616,7 @@ describe('Webhook retry claim lifetime', () => {
 
   test('a sweep remains bounded to twenty deliveries', async (t) => {
     const { db, engine } = pendingDeliveries(21);
-    t.after(() => db.close());
+    t.after(() => await db.close());
     t.mock.method(globalThis, 'fetch', async () => ({ ok: true, status: 200, text: async () => 'OK' }));
 
     assert.equal((await engine.retryPending()).length, 20);

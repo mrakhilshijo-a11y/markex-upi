@@ -2,21 +2,13 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PaymentStatus } from '@youpi/common';
+import { PaymentStatus, loadRootEnv } from '@youpi/common';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '../../..');
 
-// In production, reliably ensure environment variables from .env are loaded if not already provided
-if (!process.env.BASE_CHECKOUT_URL && typeof process.loadEnvFile === 'function') {
-  try {
-    const rootEnv = path.resolve(rootDir, '.env');
-    if (fs.existsSync(rootEnv)) {
-      process.loadEnvFile(rootEnv);
-    }
-  } catch {}
-}
+loadRootEnv(rootDir);
 import {
   getDatabase,
   ensureDatabaseInitialized,
@@ -53,10 +45,10 @@ import { registerDeviceRoutes } from './routes/device.routes.js';
 import { getWhatsAppBerryService, WhatsAppBerryService } from './services/whatsapp-berry.service.js';
 import { ObserverPollerService } from './services/observer-poller.service.js';
 
-export function createPaymentApp(customDb = null, options = {}) {
+export async function createPaymentApp(customDb = null, options = {}) {
   const db = customDb || getDatabase();
-  ensureDatabaseInitialized(db);
-  const { defaultMerchant } = runMigrations(db);
+  await ensureDatabaseInitialized(db);
+  const { defaultMerchant } = await runMigrations(db);
   const isCustom = !!customDb;
   const whatsappBerryService = options.whatsappBerryService || (isCustom ? new WhatsAppBerryService({
     sessionId: 'test_berry_session',
@@ -158,12 +150,12 @@ export function createPaymentApp(customDb = null, options = {}) {
   } catch {}
 
   // BULLETPROOF QUEUE PROMOTION HANDLER
-  function handleSlotFreedAndPromote(receivingAccountId) {
+  async function handleSlotFreedAndPromote(receivingAccountId) {
     if (!receivingAccountId) return null;
-    const promoted = queueEngine.promoteNext(receivingAccountId);
+    const promoted = await queueEngine.promoteNext(receivingAccountId);
     if (promoted) {
       if (promoted.expiresAt) {
-        timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
+        await timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
       }
       server.broadcastSse(promoted.id, 'status_change', {
         status: PaymentStatus.ACTIVE,
@@ -177,8 +169,8 @@ export function createPaymentApp(customDb = null, options = {}) {
     return promoted;
   }
 
-  eventEmitter.on('PAYMENT.OBSERVED_SUCCESS', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.OBSERVED_SUCCESS', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.OBSERVED_SUCCESS,
@@ -188,12 +180,12 @@ export function createPaymentApp(customDb = null, options = {}) {
         sources: data.sources || session.verificationSources
       });
       webhookEngine.dispatch('OBSERVED_SUCCESS', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
-  eventEmitter.on('PAYMENT.MANUAL_REVIEW', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.MANUAL_REVIEW', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.MANUAL_REVIEW,
@@ -201,12 +193,12 @@ export function createPaymentApp(customDb = null, options = {}) {
         reason: data.reason || null
       });
       webhookEngine.dispatch('MANUAL_REVIEW', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
-  eventEmitter.on('PAYMENT.RECONCILED', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.RECONCILED', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session && session.status === PaymentStatus.RECONCILED) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.RECONCILED,
@@ -218,8 +210,8 @@ export function createPaymentApp(customDb = null, options = {}) {
   });
 
   // When a payment succeeds, fails, expires, or cancels: dispatch webhook & promote next queued customer
-  eventEmitter.on('PAYMENT.SUCCESS', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.SUCCESS', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.SUCCESS,
@@ -228,7 +220,7 @@ export function createPaymentApp(customDb = null, options = {}) {
         sources: data.sources || session.verificationSources
       });
       webhookEngine.dispatch('SUCCESS', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
@@ -241,33 +233,33 @@ export function createPaymentApp(customDb = null, options = {}) {
     });
   });
 
-  eventEmitter.on('PAYMENT.FAILED', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.FAILED', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       webhookEngine.dispatch('FAILED', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
-  eventEmitter.on('PAYMENT.EXPIRED', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.EXPIRED', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.EXPIRED
       });
       webhookEngine.dispatch('EXPIRED', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
-  eventEmitter.on('PAYMENT.CANCELLED', (data) => {
-    const session = sessionRepo.findById(data.paymentId);
+  eventEmitter.on('PAYMENT.CANCELLED', async (data) => {
+    const session = await sessionRepo.findById(data.paymentId);
     if (session) {
       server.broadcastSse(session.id, 'status_change', {
         status: PaymentStatus.CANCELLED
       });
       webhookEngine.dispatch('CANCELLED', session).catch(() => {});
-      handleSlotFreedAndPromote(session.receivingAccountId);
+      await handleSlotFreedAndPromote(session.receivingAccountId);
     }
   });
 
@@ -298,55 +290,55 @@ export function createPaymentApp(customDb = null, options = {}) {
 
 
   // Continuous 1-second background queue sync and auto-expiry daemon
-  const queueSyncDaemon = setInterval(() => {
+  const queueSyncDaemon = setInterval(() => void (async () => {
     try {
       const nowIso = new Date().toISOString();
 
       // Sweep expired ACTIVE sessions
-      const expiredActive = db.query(`
+      const expiredActive = await db.query(`
         SELECT id, merchant_id, order_id, receiving_account_id FROM payment_sessions
         WHERE status = 'ACTIVE' AND expires_at <= ?
       `, [nowIso]);
 
       for (const row of expiredActive) {
-        sessionRepo.transitionToTerminal(row.id, PaymentStatus.EXPIRED);
+        await sessionRepo.transitionToTerminal(row.id, PaymentStatus.EXPIRED);
         server.broadcastSse(row.id, 'status_change', { status: PaymentStatus.EXPIRED });
         eventEmitter.emit('PAYMENT.EXPIRED', {
           paymentId: row.id,
           orderId: row.order_id,
           merchantId: row.merchant_id
         });
-        handleSlotFreedAndPromote(row.receiving_account_id);
+        await handleSlotFreedAndPromote(row.receiving_account_id);
       }
 
       // Sweep failed PROCESSING sessions
-      const failedProc = db.query(`
+      const failedProc = await db.query(`
         SELECT id, merchant_id, order_id, receiving_account_id FROM payment_sessions
         WHERE status = 'PROCESSING' AND processing_expires_at <= ?
       `, [nowIso]);
 
       for (const row of failedProc) {
-        sessionRepo.transitionToTerminal(row.id, PaymentStatus.FAILED);
+        await sessionRepo.transitionToTerminal(row.id, PaymentStatus.FAILED);
         server.broadcastSse(row.id, 'status_change', { status: PaymentStatus.FAILED });
         eventEmitter.emit('PAYMENT.FAILED', {
           paymentId: row.id,
           orderId: row.order_id,
           merchantId: row.merchant_id
         });
-        handleSlotFreedAndPromote(row.receiving_account_id);
+        await handleSlotFreedAndPromote(row.receiving_account_id);
       }
 
       // Scan for vacant receiving accounts that have waiting queued sessions
-      const vacantAccounts = db.query(`
+      const vacantAccounts = await db.query(`
         SELECT id FROM payment_receiving_accounts
         WHERE is_active = 1 AND (is_slot_busy = 0 OR current_active_session_id IS NULL)
       `);
 
       for (const acc of vacantAccounts) {
-        handleSlotFreedAndPromote(acc.id);
+        await handleSlotFreedAndPromote(acc.id);
       }
     } catch {}
-  }, 1000);
+  })(), 1000);
 
   if (queueSyncDaemon.unref) queueSyncDaemon.unref();
 
@@ -358,7 +350,7 @@ export function createPaymentApp(customDb = null, options = {}) {
   // an unhandled error that can take the process down.
   const webhookRetryDaemon = setInterval(() => {
     try {
-      const outcome = webhookEngine.recoverOutbox().then(() => webhookEngine.retryPending());
+      const outcome = await webhookEngine.recoverOutbox().then(() => await webhookEngine.retryPending());
       if (outcome && typeof outcome.catch === 'function') outcome.catch(() => {});
     } catch {}
   }, Number(process.env.WEBHOOK_RETRY_INTERVAL_MS || 5000));
@@ -382,15 +374,15 @@ export function createPaymentApp(customDb = null, options = {}) {
   });
 
   // Execute crash recovery on boot (AFTER event listeners are wired so recovered terminal transitions emit webhooks)
-  const recoveryStats = recoveryEngine.recover();
+  const recoveryStats = await recoveryEngine.recover();
   // Replay only outboxed transitions that lack a durable delivery record.
-  webhookEngine.recoverOutbox().catch(err => {
+  await webhookEngine.recoverOutbox().catch(err => {
     console.error('[webhook] Failed to recover terminal-event outbox:', err.message);
   });
 
   // Immediately kick off a background retry sweep for any recovered in-flight or backfilled webhooks
   try {
-    const initialRetry = webhookEngine.retryPending();
+    const initialRetry = await webhookEngine.retryPending();
     if (initialRetry && typeof initialRetry.catch === 'function') initialRetry.catch(() => {});
   } catch {}
 
@@ -474,11 +466,11 @@ export function createPaymentApp(customDb = null, options = {}) {
   };
 }
 
-export function startServer(port = null, customDb = null) {
+export async function startServer(port = null, customDb = null) {
   const finalPort = port ?? Number(
   process.env.PORT || process.env.PAYMENT_API_PORT || 6100
   );
-  const app = createPaymentApp(customDb);
+  const app = await createPaymentApp(customDb);
 
   return new Promise(resolve => {
     // Loopback by default; reach this service via the local Cloudflare Tunnel, not 0.0.0.0.
@@ -499,5 +491,8 @@ export function startServer(port = null, customDb = null) {
 
 // Auto-run if executed directly as main script
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startServer();
+  startServer().catch((err) => {
+    console.error('[Payment API] Failed to start:', err?.message || err);
+    process.exit(1);
+  });
 }

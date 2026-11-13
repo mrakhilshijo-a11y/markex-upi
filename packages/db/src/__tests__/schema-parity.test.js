@@ -114,7 +114,7 @@ describe('Database Schema Parity & Integrity (Postgres vs SQLite) (#13)', () => 
     }
   });
 
-  test('sqlite-schema.sql executes cleanly and creates complete schema on fresh database', () => {
+  test('sqlite-schema.sql executes cleanly and creates complete schema on fresh database', async () => {
     const db = new Database({ inMemory: true, autoMigrate: false });
     try {
       db.exec(sqliteSchema);
@@ -131,7 +131,7 @@ describe('Database Schema Parity & Integrity (Postgres vs SQLite) (#13)', () => 
       assert.ok(tableNames.includes('audit_logs'));
       assert.ok(tableNames.includes('security_events'));
     } finally {
-      db.close();
+      await db.close();
     }
   });
 });

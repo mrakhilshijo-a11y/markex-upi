@@ -26,9 +26,9 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
   let defaultMerchant;
   let events;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = new Database({ inMemory: true });
-    const seed = runMigrations(db);
+    const seed = await runMigrations(db);
     defaultMerchant = seed.defaultMerchant;
     testAccount = { id: '00000000-0000-0000-0000-000000000002' };
 
@@ -67,25 +67,25 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     timingEngine.destroy();
-    db.close();
+    await db.close();
   });
 
-  test('Queue Engine correctly assigns active slot and queued positions with wait estimates', () => {
-    const s1 = sessionRepo.create({
+  test('Queue Engine correctly assigns active slot and queued positions with wait estimates', async () => {
+    const s1 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'Q-ORD-1',
       amountPaise: 20000n
     });
-    const s2 = sessionRepo.create({
+    const s2 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'Q-ORD-2',
       amountPaise: 20000n
     });
-    const s3 = sessionRepo.create({
+    const s3 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'Q-ORD-3',
@@ -115,13 +115,13 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
   });
 
   test('Timing Engine: 5-minute active window expires and auto-promotes next in queue', async () => {
-    const s1 = sessionRepo.create({
+    const s1 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'TIM-ORD-1',
       amountPaise: 20000n
     });
-    const s2 = sessionRepo.create({
+    const s2 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'TIM-ORD-2',
@@ -137,17 +137,17 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 70));
 
     // s1 must now be EXPIRED
-    const updatedS1 = sessionRepo.findById(s1.id);
+    const updatedS1 = await sessionRepo.findById(s1.id);
     assert.equal(updatedS1.status, PaymentStatus.EXPIRED);
 
     // s2 must now be promoted to ACTIVE!
-    const updatedS2 = sessionRepo.findById(s2.id);
+    const updatedS2 = await sessionRepo.findById(s2.id);
     assert.equal(updatedS2.status, PaymentStatus.ACTIVE);
     assert.equal(updatedS2.queuePosition, 0);
   });
 
   test('Timing Engine: Payment Done starts 30-sec processing window, fails if no observation', async () => {
-    const s1 = sessionRepo.create({
+    const s1 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'PROC-ORD-1',
@@ -165,15 +165,15 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 70));
 
     // s1 must now be FAILED because no observer verified it
-    const updatedS1 = sessionRepo.findById(s1.id);
+    const updatedS1 = await sessionRepo.findById(s1.id);
     assert.equal(updatedS1.status, PaymentStatus.FAILED);
   });
 
-  test('Recovery Engine: crash recovery cleans up overdue sessions and promotes queued', () => {
+  test('Recovery Engine: crash recovery cleans up overdue sessions and promotes queued', async () => {
     // Simulate a crash scenario:
     // Session 1 was ACTIVE but expires_at was 10 minutes ago
     const pastDate = new Date(Date.now() - 600000).toISOString();
-    const s1 = sessionRepo.create({
+    const s1 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'CRASH-ORD-1',
@@ -191,7 +191,7 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
     `, [s1.id, testAccount.id]);
 
     // Session 2 was QUEUED waiting for slot
-    const s2 = sessionRepo.create({
+    const s2 = await sessionRepo.create({
       merchantId: defaultMerchant.id,
       receivingAccountId: testAccount.id,
       orderId: 'CRASH-ORD-2',
@@ -206,28 +206,28 @@ describe('@youpi/core Queue & Timing Engine Tests', () => {
     assert.equal(stats.promotedCount, 1);
 
     // S1 must be EXPIRED
-    const checkS1 = sessionRepo.findById(s1.id);
+    const checkS1 = await sessionRepo.findById(s1.id);
     assert.equal(checkS1.status, PaymentStatus.EXPIRED);
 
     // S2 must be promoted to ACTIVE
-    const checkS2 = sessionRepo.findById(s2.id);
+    const checkS2 = await sessionRepo.findById(s2.id);
     assert.equal(checkS2.status, PaymentStatus.ACTIVE);
     assert.equal(checkS2.queuePosition, 0);
   });
-  test('uses the configured payment window (PAYMENT_ACTIVE_WINDOW_MS) for activation and promotion', () => {
+  test('uses the configured payment window (PAYMENT_ACTIVE_WINDOW_MS) for activation and promotion', async () => {
     const engine = new QueueEngine({ sessionRepo, accountRepo, activeDurationMs: 60000 });
-    const mk = (orderId) => sessionRepo.create({ merchantId: defaultMerchant.id, receivingAccountId: testAccount.id, orderId, amountPaise: 20000n });
+    const mk = (orderId) => await sessionRepo.create({ merchantId: defaultMerchant.id, receivingAccountId: testAccount.id, orderId, amountPaise: 20000n });
     const a = mk('WIN-ORD-1');
     const b = mk('WIN-ORD-2');
 
     const t0 = Date.now();
     const first = engine.enqueueOrActivate(a.id, testAccount.id);
     assert.equal(first.status, PaymentStatus.ACTIVE);
-    const firstWindow = sessionRepo.findById(a.id).expiresAt.getTime() - t0;
+    const firstWindow = await sessionRepo.findById(a.id).expiresAt.getTime() - t0;
     assert.ok(firstWindow > 55000 && firstWindow < 65000, `first slot should get 60s, got ${firstWindow}ms`);
 
     assert.equal(engine.enqueueOrActivate(b.id, testAccount.id).status, PaymentStatus.QUEUED);
-    sessionRepo.transitionToTerminal(a.id, PaymentStatus.EXPIRED);
+    await sessionRepo.transitionToTerminal(a.id, PaymentStatus.EXPIRED);
     const t1 = Date.now();
     const promoted = engine.promoteNext(testAccount.id);
     assert.ok(promoted, 'queued session was not promoted');

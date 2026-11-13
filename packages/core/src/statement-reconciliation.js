@@ -47,10 +47,10 @@ export class StatementReconciliation {
     this.eventEmitter = eventEmitter;
   }
 
-  importCsv({ receivingAccountId, csvText }) {
+  async importCsv({ receivingAccountId, csvText }) {
     const parsed = parseStatementCsv(csvText);
     if (parsed.error) return { error: parsed.error, lines: [] };
-    const lines = parsed.lines.map(line => this.applyLine(receivingAccountId, line));
+    const lines = await Promise.all(parsed.lines.map((line) => this.applyLine(receivingAccountId, line)));
     return {
       lines,
       reconciled: lines.filter(line => line.outcome === 'RECONCILED').length,
@@ -59,9 +59,9 @@ export class StatementReconciliation {
     };
   }
 
-  applyLine(receivingAccountId, line) {
+  async applyLine(receivingAccountId, line) {
     const hash = sourceHash(receivingAccountId, line);
-    const existing = this.db.queryOne(
+    const existing = await this.db.queryOne(
       'SELECT * FROM bank_statement_lines WHERE receiving_account_id = ? AND source_hash = ?',
       [receivingAccountId, hash]
     );
@@ -77,7 +77,7 @@ export class StatementReconciliation {
 
     const rowId = existing?.id || crypto.randomUUID();
     if (!existing) {
-      this.db.execute(`
+      await this.db.execute(`
         INSERT INTO bank_statement_lines (
           id, receiving_account_id, source_hash, booked_on, amount_paise, currency,
           direction, utr, narration, match_status, match_reason, payment_session_id, imported_at
@@ -96,48 +96,48 @@ export class StatementReconciliation {
     }
 
     if (line.direction !== 'CREDIT') {
-      return this.finish(rowId, 'IGNORED', 'DEBIT', null);
+      return await this.finish(rowId, 'IGNORED', 'DEBIT', null);
     }
     if (!line.utr) {
       const reason = line.referenceCount > 1 ? 'AMBIGUOUS_REFERENCE' : 'MISSING_REFERENCE';
-      return this.finish(rowId, 'CONFLICT', reason, null);
+      return await this.finish(rowId, 'CONFLICT', reason, null);
     }
 
-    const already = this.findReconciled(receivingAccountId, line);
+    const already = await this.findReconciled(receivingAccountId, line);
     if (already) {
-      return this.finish(rowId, 'RECONCILED', 'ALREADY_RECONCILED', already.id, { emit: false });
+      return await this.finish(rowId, 'RECONCILED', 'ALREADY_RECONCILED', already.id, { emit: false });
     }
 
-    const attributed = this.findAttributed(receivingAccountId, line.utr)
+    const attributed = await this.findAttributed(receivingAccountId, line.utr)
       .filter(session => session.currency === 'INR' || !session.currency);
     const exact = attributed.filter(session => sameAmount(session, line.amountPaise));
     const amountConflicts = attributed.filter(session => !sameAmount(session, line.amountPaise));
 
     if (exact.length > 1 || amountConflicts.length > 0) {
-      this.holdAll([...exact, ...amountConflicts], 'STATEMENT_AMOUNT_OR_DUPLICATE');
-      return this.finish(rowId, 'CONFLICT', exact.length > 1 ? 'MULTIPLE_SESSIONS' : 'AMOUNT_MISMATCH', null);
+      await this.holdAll([...exact, ...amountConflicts], 'STATEMENT_AMOUNT_OR_DUPLICATE');
+      return await this.finish(rowId, 'CONFLICT', exact.length > 1 ? 'MULTIPLE_SESSIONS' : 'AMOUNT_MISMATCH', null);
     }
     if (exact.length === 1) {
       const session = exact[0];
       const observedOn = this.observedCalendarDate(session);
       if (!observedOn || !this.withinPostingWindow(observedOn, line.bookedOn)) {
-        this.holdAll([session], 'STATEMENT_DATE_OUTSIDE_WINDOW');
-        return this.finish(rowId, 'CONFLICT', 'STATEMENT_DATE_OUTSIDE_WINDOW', null);
+        await this.holdAll([session], 'STATEMENT_DATE_OUTSIDE_WINDOW');
+        return await this.finish(rowId, 'CONFLICT', 'STATEMENT_DATE_OUTSIDE_WINDOW', null);
       }
       return this.reconcile(rowId, session);
     }
 
-    const held = this.findManualReviewByAmount(receivingAccountId, line.amountPaise);
+    const held = await this.findManualReviewByAmount(receivingAccountId, line.amountPaise);
     const seen = this.observationsForReference(receivingAccountId, line);
     if (held.length === 1 && seen.length >= 1) {
       const observedOn = calendarDateInIndia(seen[0].observed_at);
       if (!observedOn || !this.withinPostingWindow(observedOn, line.bookedOn)) {
-        return this.finish(rowId, 'CONFLICT', 'STATEMENT_DATE_OUTSIDE_WINDOW', null);
+        return await this.finish(rowId, 'CONFLICT', 'STATEMENT_DATE_OUTSIDE_WINDOW', null);
       }
       return this.reconcile(rowId, held[0], seen[0]);
     }
     if (held.length > 1 && seen.length >= 1) {
-      return this.finish(rowId, 'CONFLICT', 'MULTIPLE_SESSIONS', null);
+      return await this.finish(rowId, 'CONFLICT', 'MULTIPLE_SESSIONS', null);
     }
     if (seen.length >= 1) {
       let candidateSessionId = seen[0].attributed_payment_id || null;
@@ -171,28 +171,28 @@ export class StatementReconciliation {
         amountPaise: BigInt(line.amountPaise),
         statementLineId: rowId
       });
-      return this.finish(rowId, 'UNMATCHED', 'NO_OBSERVED_SESSION', null, {
+      return await this.finish(rowId, 'UNMATCHED', 'NO_OBSERVED_SESSION', null, {
         observationId: seen[0].id,
         candidatePaymentSessionId: candidateSessionId
       });
     }
-    return this.finish(rowId, 'UNMATCHED', 'NO_OBSERVED_SESSION', null);
+    return await this.finish(rowId, 'UNMATCHED', 'NO_OBSERVED_SESSION', null);
   }
 
   withinPostingWindow(observedOn, bookedOn) {
     return bookedOn >= observedOn && bookedOn <= addCalendarDays(observedOn, STATEMENT_POSTING_DAYS);
   }
 
-  observedCalendarDate(session) {
-    const row = this.db.queryOne(
+  async observedCalendarDate(session) {
+    const row = await this.db.queryOne(
       'SELECT observed_at FROM payment_observations WHERE id = ? OR attributed_payment_id = ? ORDER BY observed_at ASC LIMIT 1',
       [session.attributedObservationId || '', session.id]
     );
     return calendarDateInIndia(row?.observed_at || session.completedAt || session.createdAt);
   }
 
-  findAttributed(receivingAccountId, utr) {
-    const rows = this.db.query(`
+  async findAttributed(receivingAccountId, utr) {
+    const rows = await this.db.query(`
       SELECT DISTINCT ps.*
       FROM payment_sessions ps
       JOIN payment_observations po
@@ -204,8 +204,8 @@ export class StatementReconciliation {
     return rows.map(row => this.sessionRepo.mapRow(row));
   }
 
-  findReconciled(receivingAccountId, line) {
-    const row = this.db.queryOne(`
+  async findReconciled(receivingAccountId, line) {
+    const row = await this.db.queryOne(`
       SELECT ps.*
       FROM payment_sessions ps
       JOIN payment_observations po
@@ -219,16 +219,16 @@ export class StatementReconciliation {
     return row ? this.sessionRepo.mapRow(row) : null;
   }
 
-  findManualReviewByAmount(receivingAccountId, amountPaise) {
-    const rows = this.db.query(`
+  async findManualReviewByAmount(receivingAccountId, amountPaise) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_sessions
       WHERE receiving_account_id = ? AND status = 'MANUAL_REVIEW' AND amount_paise = ?
     `, [receivingAccountId, amountPaise]);
     return rows.map(row => this.sessionRepo.mapRow(row));
   }
 
-  observationsForReference(receivingAccountId, line) {
-    return this.db.query(`
+  async observationsForReference(receivingAccountId, line) {
+    return await this.db.query(`
       SELECT id, observed_at, attribution_status, attributed_payment_id, raw_payload
       FROM payment_observations
       WHERE receiving_account_id = ? AND bank_reference_number = ? AND amount_paise = ?
@@ -236,12 +236,12 @@ export class StatementReconciliation {
     `, [receivingAccountId, line.utr, line.amountPaise]);
   }
 
-  holdAll(sessions, reason) {
+  async holdAll(sessions, reason) {
     for (const session of sessions) {
       if (session.status !== PaymentStatus.OBSERVED_SUCCESS && session.status !== PaymentStatus.MANUAL_REVIEW) continue;
       const before = session.status;
       try {
-        const updated = this.sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
+        const updated = await this.sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
         if (before !== PaymentStatus.MANUAL_REVIEW && updated.status === PaymentStatus.MANUAL_REVIEW) {
           this.eventEmitter?.emit('PAYMENT.MANUAL_REVIEW', {
             paymentId: session.id,
@@ -256,22 +256,22 @@ export class StatementReconciliation {
     }
   }
 
-  reconcile(rowId, session, matchedObs = null) {
+  async reconcile(rowId, session, matchedObs = null) {
     const before = session.status;
-    const updated = this.sessionRepo.transitionToTerminal(session.id, PaymentStatus.RECONCILED);
+    const updated = await this.sessionRepo.transitionToTerminal(session.id, PaymentStatus.RECONCILED);
     if (updated.status !== PaymentStatus.RECONCILED) {
-      return this.finish(rowId, 'CONFLICT', 'TRANSITION_REJECTED', null);
+      return await this.finish(rowId, 'CONFLICT', 'TRANSITION_REJECTED', null);
     }
     if (matchedObs?.id) {
       try {
-        this.db.execute(
+        await this.db.execute(
           `UPDATE payment_observations
            SET attribution_status = 'ATTRIBUTED',
                attributed_payment_id = COALESCE(attributed_payment_id, ?)
            WHERE id = ?`,
           [session.id, matchedObs.id]
         );
-        this.db.execute(
+        await this.db.execute(
           `UPDATE payment_sessions
            SET attributed_observation_id = COALESCE(attributed_observation_id, ?)
            WHERE id = ?`,
@@ -279,18 +279,18 @@ export class StatementReconciliation {
         );
       } catch {
         // If another observation already holds the unique UTR attribution index, still mark ATTRIBUTED
-        this.db.execute(
+        await this.db.execute(
           `UPDATE payment_observations SET attribution_status = 'ATTRIBUTED' WHERE id = ?`,
           [matchedObs.id]
         );
       }
     }
     const emit = before !== PaymentStatus.RECONCILED;
-    return this.finish(rowId, 'RECONCILED', 'BANK_STATEMENT_MATCH', updated.id, { emit, session: updated });
+    return await this.finish(rowId, 'RECONCILED', 'BANK_STATEMENT_MATCH', updated.id, { emit, session: updated });
   }
 
-  finish(rowId, matchStatus, matchReason, paymentSessionId, options = {}) {
-    this.db.execute(`
+  async finish(rowId, matchStatus, matchReason, paymentSessionId, options = {}) {
+    await this.db.execute(`
       UPDATE bank_statement_lines
       SET match_status = ?, match_reason = ?, payment_session_id = ?
       WHERE id = ?

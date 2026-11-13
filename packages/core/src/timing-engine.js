@@ -36,7 +36,7 @@ export class TimingEngine {
     const delayMs = Math.max(0, expiresAt.getTime() - Date.now());
 
     const timer = setTimeout(() => {
-      this.handleActiveTimerExpiration(sessionId);
+      void this.handleActiveTimerExpiration(sessionId);
     }, delayMs);
 
     // Unref so timer doesn't prevent process exit if running standalone
@@ -50,10 +50,10 @@ export class TimingEngine {
    * Transitions to EXPIRED and promotes next queued customer.
    * @param {string} sessionId
    */
-  handleActiveTimerExpiration(sessionId) {
+  async handleActiveTimerExpiration(sessionId) {
     this.activeTimers.delete(sessionId);
 
-    const session = this.sessionRepo.findById(sessionId);
+    const session = await this.sessionRepo.findById(sessionId);
     if (!session) return;
 
     // Invariant: Only expire if still in ACTIVE status
@@ -62,10 +62,10 @@ export class TimingEngine {
     }
 
     // Transition to EXPIRED and release slot
-    this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.EXPIRED);
+    await this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.EXPIRED);
 
     if (this.auditRepo) {
-      this.auditRepo.log({
+      await this.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: sessionId,
@@ -85,7 +85,7 @@ export class TimingEngine {
 
     // Immediately promote next queued customer
     if (session.receivingAccountId) {
-      this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
+      void this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
     }
   }
 
@@ -109,10 +109,10 @@ export class TimingEngine {
    * @param {string} sessionId
    * @returns {any} Updated session in PROCESSING state
    */
-  handlePaymentDone(sessionId) {
+  async handlePaymentDone(sessionId) {
     // Commit the database transition before cancelling the active timer. A failed
     // transition leaves the session ACTIVE, so its original expiry must stay armed.
-    const session = this.sessionRepo.transitionToProcessing(sessionId, this.processingDurationMs);
+    const session = await this.sessionRepo.transitionToProcessing(sessionId, this.processingDurationMs);
 
     const activeTimer = this.activeTimers.get(sessionId);
     if (activeTimer) {
@@ -121,7 +121,7 @@ export class TimingEngine {
     }
 
     if (this.auditRepo) {
-      this.auditRepo.log({
+      await this.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: sessionId,
@@ -141,7 +141,7 @@ export class TimingEngine {
     const delayMs = Math.max(0, session.processingExpiresAt.getTime() - Date.now());
 
     const procTimer = setTimeout(() => {
-      this.handleProcessingTimerExpiration(sessionId);
+      void this.handleProcessingTimerExpiration(sessionId);
     }, delayMs);
 
     if (procTimer.unref) procTimer.unref();
@@ -155,10 +155,10 @@ export class TimingEngine {
    * Transitions to FAILED and promotes next queued customer.
    * @param {string} sessionId
    */
-  handleProcessingTimerExpiration(sessionId) {
+  async handleProcessingTimerExpiration(sessionId) {
     this.processingTimers.delete(sessionId);
 
-    const session = this.sessionRepo.findById(sessionId);
+    const session = await this.sessionRepo.findById(sessionId);
     if (!session) return;
 
     // Invariant: Only fail if still in PROCESSING status (no observer matched it yet)
@@ -167,10 +167,10 @@ export class TimingEngine {
     }
 
     // Transition to FAILED and release slot
-    this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.FAILED);
+    await this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.FAILED);
 
     if (this.auditRepo) {
-      this.auditRepo.log({
+      await this.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: sessionId,
@@ -190,7 +190,7 @@ export class TimingEngine {
 
     // Immediately promote next queued customer
     if (session.receivingAccountId) {
-      this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
+      void this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
     }
   }
 
@@ -199,20 +199,20 @@ export class TimingEngine {
    * Immediately releases slot and promotes next queued customer.
    * @param {string} sessionId
    */
-  handleCancel(sessionId) {
-    const session = this.sessionRepo.findById(sessionId);
+  async handleCancel(sessionId) {
+    const session = await this.sessionRepo.findById(sessionId);
     if (!session) return null;
 
     if ([PaymentStatus.PROCESSING, PaymentStatus.SUCCESS, PaymentStatus.OBSERVED_SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.MANUAL_REVIEW, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
       return session; // cannot cancel in-flight PROCESSING or already terminal sessions
     }
 
-    const updated = this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.CANCELLED);
+    const updated = await this.sessionRepo.transitionToTerminal(sessionId, PaymentStatus.CANCELLED);
 
     this.clearTimers(sessionId);
 
     if (this.auditRepo) {
-      this.auditRepo.log({
+      await this.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: sessionId,
@@ -232,7 +232,7 @@ export class TimingEngine {
 
     // Immediately promote next queued customer
     if (session.receivingAccountId) {
-      this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
+      void this.queueEngine.promoteNext(session.receivingAccountId, this.activeDurationMs);
     }
 
     return updated;

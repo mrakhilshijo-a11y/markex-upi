@@ -13,7 +13,7 @@ import { StatementReconciliation } from '../statement-reconciliation.js';
 
 function fixture() {
   const db = new Database({ inMemory: true });
-  runMigrations(db);
+  await runMigrations(db);
   const merchants = new MerchantRepository(db);
   const merchant = merchants.create({ businessName: 'Synthetic outcomes', slug: 'outcome-fixture', contactEmail: 'outcomes@example.com', contactPhone: '9000000000', webhookUrl: 'http://localhost:54321/webhook', webhookSecret: 'synthetic_outcome_test_secret' });
   const sessions = new PaymentSessionRepository(db);
@@ -33,7 +33,7 @@ for (const outcome of ['OBSERVED_SUCCESS', 'MANUAL_REVIEW', 'RECONCILED', 'EXPIR
       await engine.recoverOutbox();
       assert.deepEqual(received.map(item => item.event), [outcome]);
       assert.equal((await engine.recoverOutbox()).length, 0);
-    } finally { globalThis.fetch = previousFetch; db.close(); }
+    } finally { globalThis.fetch = previousFetch; await db.close(); }
   });
 }
 
@@ -52,17 +52,17 @@ test('observed then reconciled before dispatch retains two distinct durable even
     assert.equal(new Set(received.map(item => item.deliveryId)).size, 2);
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_webhook_outbox').n, 0);
     assert.equal((await engine.recoverOutbox()).length, 0);
-  } finally { globalThis.fetch = previousFetch; db.close(); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); }
 });
 
-test('terminal transition rollback leaves no event', () => {
+test('terminal transition rollback leaves no event', async () => {
   const { db, sessions, merchant } = fixture();
   try {
     const session = sessions.create({ merchantId: merchant.id, orderId: 'ROLLBACK', amountPaise: 300n, status: 'ACTIVE' });
     assert.throws(() => db.transaction(() => { sessions.transitionToTerminal(session.id, 'OBSERVED_SUCCESS'); throw new Error('rollback'); }), /rollback/);
     assert.equal(sessions.findById(session.id).status, 'ACTIVE');
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_webhook_outbox').n, 0);
-  } finally { db.close(); }
+  } finally { await db.close(); }
 });
 
 test('dispatching one outcome preserves the next pending event when configuration fails', async () => {
@@ -79,10 +79,10 @@ test('dispatching one outcome preserves the next pending event when configuratio
     assert.equal((await engine.dispatch('RECONCILED', sessions.findById(session.id))).delivered, false);
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM webhook_deliveries WHERE payment_id = ? AND event_type = ?', [session.id, 'RECONCILED']).n, 0);
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_webhook_outbox WHERE payment_id = ?', [session.id]).n, 1);
-  } finally { globalThis.fetch = previousFetch; db.close(); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); }
 });
 
-test('legacy upgrade preserves pending event and timestamp without queuing history, and is repeatable', () => {
+test('legacy upgrade preserves pending event and timestamp without queuing history, and is repeatable', async () => {
   const { db, sessions, merchant } = fixture();
   try {
     const old = sessions.create({ merchantId: merchant.id, orderId: 'HISTORY', amountPaise: 300n, status: 'RECONCILED' });
@@ -100,8 +100,8 @@ test('legacy upgrade preserves pending event and timestamp without queuing histo
       BEGIN INSERT OR IGNORE INTO payment_webhook_outbox (payment_id, event_type) VALUES (NEW.id, NEW.status); END;
     `);
     db.execute('INSERT INTO payment_webhook_outbox VALUES (?, ?, ?)', [pending.id, 'EXPIRED', '2026-10-28T00:00:00.123Z']);
-    runMigrations(db);
-    runMigrations(db);
+    await runMigrations(db);
+    await runMigrations(db);
     const rows = db.query('SELECT * FROM payment_webhook_outbox');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].payment_id, pending.id);
@@ -113,10 +113,10 @@ test('legacy upgrade preserves pending event and timestamp without queuing histo
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_webhook_outbox WHERE payment_id = ?', [modern.id]).n, 2);
     db.execute('DELETE FROM payment_sessions WHERE id = ?', [modern.id]);
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_webhook_outbox WHERE payment_id = ?', [modern.id]).n, 0);
-  } finally { db.close(); }
+  } finally { await db.close(); }
 });
 
-test('legacy outbox migration rolls back DDL and pending rows if replacement fails', () => {
+test('legacy outbox migration rolls back DDL and pending rows if replacement fails', async () => {
   const { db, sessions, merchant } = fixture();
   const originalExec = db.exec.bind(db);
   try {
@@ -127,14 +127,14 @@ test('legacy outbox migration rolls back DDL and pending rows if replacement fai
       WHEN NEW.status = 'EXPIRED' BEGIN INSERT OR IGNORE INTO payment_webhook_outbox VALUES (NEW.id, NEW.status, 'legacy'); END;`);
     db.execute('INSERT INTO payment_webhook_outbox VALUES (?, ?, ?)', [session.id, 'EXPIRED', 'legacy-time']);
     db.exec = sql => { if (sql.includes('CREATE TABLE payment_webhook_outbox_upgrade')) { originalExec(sql); throw new Error('synthetic migration failure'); } return originalExec(sql); };
-    assert.throws(() => runMigrations(db), /synthetic migration failure/);
+    await assert.rejects(() => runMigrations(db), /synthetic migration failure/);
     db.exec = originalExec;
     assert.equal(db.queryOne('SELECT created_at FROM payment_webhook_outbox WHERE payment_id = ?', [session.id]).created_at, 'legacy-time');
     assert.equal(db.queryOne("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'payment_webhook_outbox_upgrade'").n, 0);
     assert.equal(db.queryOne("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'trg_terminal_payment_webhook_outbox'").n, 1);
-    runMigrations(db);
+    await runMigrations(db);
     assert.equal(db.query('PRAGMA table_info(payment_webhook_outbox)').find(column => column.name === 'event_type').pk, 2);
-  } finally { db.exec = originalExec; db.close(); }
+  } finally { db.exec = originalExec; await db.close(); }
 });
 
 test('real observer and statement workflow persists both events without an event listener', async () => {
@@ -170,7 +170,7 @@ test('real observer and statement workflow persists both events without an event
     assert.equal(received.length, 2);
     assert.equal(received.find(item => item.event === 'OBSERVED_SUCCESS').settlementState, 'NOT_RECONCILED');
     assert.equal(received.find(item => item.event === 'RECONCILED').settlementState, 'RECONCILED');
-  } finally { globalThis.fetch = previousFetch; db.close(); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); }
 });
 
 test('disk reopen replays both committed outcomes once without requiring historical backfill', async () => {
@@ -184,9 +184,9 @@ test('disk reopen replays both committed outcomes once without requiring histori
     const session = sessions.create({ merchantId: merchant.id, orderId: 'REOPEN', amountPaise: 300n, status: 'ACTIVE' });
     sessions.transitionToTerminal(session.id, 'OBSERVED_SUCCESS');
     sessions.transitionToTerminal(session.id, 'RECONCILED');
-    db.close();
+    await db.close();
     db = new Database({ dbPath });
-    runMigrations(db);
+    await runMigrations(db);
     const engine = new WebhookEngine({ db, merchantRepo: new MerchantRepository(db) });
     const received = [];
     globalThis.fetch = async (_url, options) => { received.push(JSON.parse(options.body)); return { ok: true, status: 200, text: async () => 'ok' }; };
@@ -195,7 +195,7 @@ test('disk reopen replays both committed outcomes once without requiring histori
     await engine.recoverOutbox();
     assert.equal(received.length, 2);
     assert.equal(db.queryOne('SELECT COUNT(*) AS n FROM webhook_deliveries WHERE payment_id = ?', [session.id]).n, 2);
-  } finally { globalThis.fetch = previousFetch; db.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('repeated same outcome is idempotent while a three-event review lifecycle keeps all events', async () => {
@@ -210,7 +210,7 @@ test('repeated same outcome is idempotent while a three-event review lifecycle k
     await engine.recoverOutbox();
     assert.deepEqual(received.map(item => item.event).sort(), ['MANUAL_REVIEW', 'OBSERVED_SUCCESS', 'RECONCILED']);
     assert.equal(new Set(received.map(item => item.deliveryId)).size, 3);
-  } finally { globalThis.fetch = previousFetch; db.close(); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); }
 });
 
 test('reconciled retry preserves its original signed bytes, timestamp and ID', async () => {
@@ -229,5 +229,5 @@ test('reconciled retry preserves its original signed bytes, timestamp and ID', a
     for (const name of ['X-Gateway-Delivery-Id', 'X-Gateway-Timestamp', 'X-Gateway-Signature', 'X-Gateway-Signature-V2']) assert.equal(requests[1].headers[name], requests[0].headers[name]);
     const expected = crypto.createHmac('sha256', merchant.webhookSecret).update(`${requests[1].headers['X-Gateway-Timestamp']}.${requests[1].body}`).digest('hex');
     assert.equal(requests[1].headers['X-Gateway-Signature-V2'], `sha256=${expected}`);
-  } finally { globalThis.fetch = previousFetch; db.close(); }
+  } finally { globalThis.fetch = previousFetch; await db.close(); }
 });

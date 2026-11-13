@@ -36,9 +36,9 @@ describe('bank statement reconciliation', () => {
   let events;
   let merchantId;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = new Database({ inMemory: true });
-    merchantId = runMigrations(db).defaultMerchant.id;
+    merchantId = await runMigrations(db).defaultMerchant.id;
     sessionRepo = new PaymentSessionRepository(db);
     events = [];
     engine = new StatementReconciliation({
@@ -49,7 +49,7 @@ describe('bank statement reconciliation', () => {
     });
   });
 
-  afterEach(() => db.close());
+  afterEach(async () => await db.close());
 
   function observe(orderId, amountPaise, utr) {
     const attribution = new AttributionEngine({
@@ -59,14 +59,14 @@ describe('bank statement reconciliation', () => {
       auditRepo: new AuditLogRepository(db),
       eventEmitter: { emit: () => {} }
     });
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId,
       receivingAccountId: ACCOUNT_ID,
       orderId,
       amountPaise
     });
-    sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
-    sessionRepo.transitionToProcessing(session.id, 30000);
+    await sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
+    await sessionRepo.transitionToProcessing(session.id, 30000);
     const result = attribution.processObservation(ObservationNormalizer.normalize({
       source: ObserverSource.GOOGLE_MESSAGES,
       receivingAccountId: ACCOUNT_ID,
@@ -76,7 +76,7 @@ describe('bank statement reconciliation', () => {
       rawPayload: { text: `Received ${utr} ${orderId}` }
     }));
     assert.equal(result.outcomeStatus, PaymentStatus.OBSERVED_SUCCESS);
-    return sessionRepo.findById(session.id);
+    return await sessionRepo.findById(session.id);
   }
 
   test('parses an HDFC credit, an Indian-grouped amount, and a quoted comma', () => {
@@ -92,12 +92,12 @@ describe('bank statement reconciliation', () => {
     assert.equal(parsed.lines[0].bookedOn, istDate());
   });
 
-  test('a matching HDFC credit reconciles the observed session once', () => {
+  test('a matching HDFC credit reconciles the observed session once', async () => {
     const session = observe('ORD-STMT-1', 49900n, '123456789012');
     const csv = hdfcCsv([creditRow()]);
     const first = engine.importCsv({ receivingAccountId: ACCOUNT_ID, csvText: csv });
     assert.equal(first.reconciled, 1);
-    assert.equal(sessionRepo.findById(session.id).status, PaymentStatus.RECONCILED);
+    assert.equal(await sessionRepo.findById(session.id).status, PaymentStatus.RECONCILED);
     assert.equal(events.filter(event => event.event === 'PAYMENT.RECONCILED').length, 1);
 
     const second = engine.importCsv({ receivingAccountId: ACCOUNT_ID, csvText: csv });
@@ -106,7 +106,7 @@ describe('bank statement reconciliation', () => {
     assert.equal(db.queryOne("SELECT COUNT(*) AS n FROM payment_sessions WHERE status = 'RECONCILED'").n, 1);
   });
 
-  test('a debit, a missing reference, and an unmatched credit do not reconcile', () => {
+  test('a debit, a missing reference, and an unmatched credit do not reconcile', async () => {
     const session = observe('ORD-STMT-2', 49900n, '123456789012');
     const csv = hdfcCsv([
       '23/10/2026,"UPI-OUT-payer@okhdfcbank-HDFC0000001-123456789012-OUT",0,23/10/2026,100.00,,9000.00',
@@ -115,13 +115,13 @@ describe('bank statement reconciliation', () => {
     ]);
     const result = engine.importCsv({ receivingAccountId: ACCOUNT_ID, csvText: csv });
     assert.equal(result.reconciled, 0);
-    assert.equal(sessionRepo.findById(session.id).status, PaymentStatus.OBSERVED_SUCCESS);
+    assert.equal(await sessionRepo.findById(session.id).status, PaymentStatus.OBSERVED_SUCCESS);
     assert.equal(result.lines[0].matchReason, 'DEBIT');
     assert.equal(result.lines[1].matchReason, 'MISSING_REFERENCE');
     assert.equal(result.lines[2].outcome, 'UNMATCHED');
   });
 
-  test('amount and date disagreements move the session to manual review', () => {
+  test('amount and date disagreements move the session to manual review', async () => {
     const amountSession = observe('ORD-STMT-AMT', 49900n, '123456789012');
     const amountResult = engine.importCsv({
       receivingAccountId: ACCOUNT_ID,
@@ -129,7 +129,7 @@ describe('bank statement reconciliation', () => {
     });
     assert.equal(amountResult.reconciled, 0);
     assert.equal(amountResult.lines[0].matchReason, 'AMOUNT_MISMATCH');
-    assert.equal(sessionRepo.findById(amountSession.id).status, PaymentStatus.MANUAL_REVIEW);
+    assert.equal(await sessionRepo.findById(amountSession.id).status, PaymentStatus.MANUAL_REVIEW);
 
     const dateSession = observe('ORD-STMT-DATE', 49900n, '223456789012');
     const dateResult = engine.importCsv({
@@ -137,26 +137,26 @@ describe('bank statement reconciliation', () => {
       csvText: hdfcCsv([creditRow({ utr: '223456789012', date: '01/10/2026' })])
     });
     assert.equal(dateResult.lines[0].matchReason, 'STATEMENT_DATE_OUTSIDE_WINDOW');
-    assert.equal(sessionRepo.findById(dateSession.id).status, PaymentStatus.MANUAL_REVIEW);
+    assert.equal(await sessionRepo.findById(dateSession.id).status, PaymentStatus.MANUAL_REVIEW);
     assert.equal(db.queryOne("SELECT COUNT(*) AS n FROM payment_sessions WHERE status = 'RECONCILED'").n, 0);
   });
 
-  test('two held sessions for one statement reference are not picked apart', () => {
+  test('two held sessions for one statement reference are not picked apart', async () => {
     const obsRepo = new ObservationRepository(db);
     function hold(orderId) {
-      const session = sessionRepo.create({
+      const session = await sessionRepo.create({
         merchantId,
         receivingAccountId: ACCOUNT_ID,
         orderId,
         amountPaise: 49900n
       });
-      sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
-      sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
+      await sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
+      await sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
       return session.id;
     }
     const firstId = hold('ORD-HOLD-1');
     const secondId = hold('ORD-HOLD-2');
-    obsRepo.create({
+    await obsRepo.create({
       receivingAccountId: ACCOUNT_ID,
       source: 'GOOGLE_MESSAGES',
       amountPaise: 49900n,
@@ -171,21 +171,21 @@ describe('bank statement reconciliation', () => {
       csvText: hdfcCsv([creditRow({ utr: '323456789012' })])
     });
     assert.equal(result.lines[0].matchReason, 'MULTIPLE_SESSIONS');
-    assert.equal(sessionRepo.findById(firstId).status, PaymentStatus.MANUAL_REVIEW);
-    assert.equal(sessionRepo.findById(secondId).status, PaymentStatus.MANUAL_REVIEW);
+    assert.equal(await sessionRepo.findById(firstId).status, PaymentStatus.MANUAL_REVIEW);
+    assert.equal(await sessionRepo.findById(secondId).status, PaymentStatus.MANUAL_REVIEW);
   });
 
-  test('one held session is reconciled when the statement reference matches its alert', () => {
+  test('one held session is reconciled when the statement reference matches its alert', async () => {
     const obsRepo = new ObservationRepository(db);
-    const session = sessionRepo.create({
+    const session = await sessionRepo.create({
       merchantId,
       receivingAccountId: ACCOUNT_ID,
       orderId: 'ORD-HOLD-ONE',
       amountPaise: 49900n
     });
-    sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
-    sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
-    obsRepo.create({
+    await sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
+    await sessionRepo.transitionToTerminal(session.id, PaymentStatus.MANUAL_REVIEW);
+    await obsRepo.create({
       receivingAccountId: ACCOUNT_ID,
       source: 'GOOGLE_MESSAGES',
       amountPaise: 49900n,
@@ -199,23 +199,23 @@ describe('bank statement reconciliation', () => {
       csvText: hdfcCsv([creditRow({ utr: '523456789012' })])
     });
     assert.equal(result.reconciled, 1);
-    const reconciledSession = sessionRepo.findById(session.id);
+    const reconciledSession = await sessionRepo.findById(session.id);
     assert.equal(reconciledSession.status, PaymentStatus.RECONCILED);
     assert.ok(reconciledSession.attributedObservationId, 'Reconciled MANUAL_REVIEW session must link attributedObservationId');
   });
 
-  test('corroborates LATE_UNMATCHED observations during statement import and emits PAYMENT.UNMATCHED_RECONCILIATION_NEEDED', () => {
+  test('corroborates LATE_UNMATCHED observations during statement import and emits PAYMENT.UNMATCHED_RECONCILIATION_NEEDED', async () => {
     const obsRepo = new ObservationRepository(db);
-    const expiredSession = sessionRepo.create({
+    const expiredSession = await sessionRepo.create({
       merchantId,
       receivingAccountId: ACCOUNT_ID,
       orderId: 'ORD-LATE-STMT-1',
       amountPaise: 49900n
     });
-    sessionRepo.acquireSlotAtomic(expiredSession.id, ACCOUNT_ID, 300000);
-    sessionRepo.transitionToTerminal(expiredSession.id, PaymentStatus.EXPIRED);
+    await sessionRepo.acquireSlotAtomic(expiredSession.id, ACCOUNT_ID, 300000);
+    await sessionRepo.transitionToTerminal(expiredSession.id, PaymentStatus.EXPIRED);
 
-    const lateObs = obsRepo.create({
+    const lateObs = await obsRepo.create({
       receivingAccountId: ACCOUNT_ID,
       source: 'GOOGLE_MESSAGES',
       amountPaise: 49900n,
@@ -234,24 +234,24 @@ describe('bank statement reconciliation', () => {
     assert.equal(result.lines[0].outcome, 'UNMATCHED');
     assert.equal(result.lines[0].observationId, lateObs.id);
     assert.equal(result.lines[0].candidatePaymentSessionId, expiredSession.id);
-    assert.equal(sessionRepo.findById(expiredSession.id).status, PaymentStatus.EXPIRED);
+    assert.equal(await sessionRepo.findById(expiredSession.id).status, PaymentStatus.EXPIRED);
     assert.equal(events.filter(e => e.event === 'PAYMENT.UNMATCHED_RECONCILIATION_NEEDED').length, 1);
   });
 
-  test('a statement line does not settle a session that was never observed', () => {
-    const session = sessionRepo.create({
+  test('a statement line does not settle a session that was never observed', async () => {
+    const session = await sessionRepo.create({
       merchantId,
       receivingAccountId: ACCOUNT_ID,
       orderId: 'ORD-UNOBSERVED',
       amountPaise: 49900n
     });
-    sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
+    await sessionRepo.acquireSlotAtomic(session.id, ACCOUNT_ID, 300000);
     const result = engine.importCsv({
       receivingAccountId: ACCOUNT_ID,
       csvText: hdfcCsv([creditRow()])
     });
     assert.equal(result.lines[0].outcome, 'UNMATCHED');
-    assert.equal(sessionRepo.findById(session.id).status, PaymentStatus.ACTIVE);
+    assert.equal(await sessionRepo.findById(session.id).status, PaymentStatus.ACTIVE);
   });
 
   test('rejects a file that has no statement header', () => {

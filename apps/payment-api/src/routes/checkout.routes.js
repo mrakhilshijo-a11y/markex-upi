@@ -19,7 +19,7 @@ const CLOSED_CHECKOUT_STATES = [
  * 1. If session has no device binding yet, binds to requesting device only if it is registered and presents valid credentials.
  * 2. If session is bound to Device A, any request omitting Device A's credentials or presenting Device B receives DUPLICATE_SESSION_DETECTED (HTTP 409).
  */
-function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
+async function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
   // If session is already in a terminal state, allow access so terminal status can be rendered
   if (CLOSED_CHECKOUT_STATES.includes(session.status)) {
     return { allowed: true, boundDeviceId: session.deviceId, isTerminal: true };
@@ -73,11 +73,11 @@ function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
         };
       }
       if (ctx?.deviceRepo) {
-        ctx.deviceRepo.touch(requestingDeviceId);
+        await ctx.deviceRepo.touch(requestingDeviceId);
       }
       if (ctx?.sessionRepo) {
         try {
-          ctx.sessionRepo.bindDevice(session.id, requestingDeviceId);
+          await ctx.sessionRepo.bindDevice(session.id, requestingDeviceId);
           session.deviceId = requestingDeviceId;
         } catch (err) {
           console.warn('[checkSessionDeviceAccess] bindDevice error:', err.message);
@@ -110,7 +110,7 @@ function checkSessionDeviceAccess(session, req, body = null, ctx = null) {
   }
 
   if (ctx?.deviceRepo) {
-    ctx.deviceRepo.touch(session.deviceId);
+    await ctx.deviceRepo.touch(session.deviceId);
   }
   return { allowed: true, boundDeviceId: session.deviceId };
 }
@@ -217,7 +217,7 @@ export async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode
   // 0. Check False Narrative Dev Switch (Active for 10 minutes from enabling time)
   const productionLock = process.env.NODE_ENV === 'production' || process.env.YOUPI_MODE === 'production';
   try {
-    const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(merchantId) : null;
+    const merchant = ctx.merchantRepo?.findById ? await ctx.merchantRepo.findById(merchantId) : null;
     const falseNarrativeUntil = merchant?.branding?.falseNarrativeUntil;
     const falseNarrativeMode = (merchant?.branding?.falseNarrativeMode || 'GREEN').toUpperCase();
     if (!productionLock && falseNarrativeUntil && Number(falseNarrativeUntil) > Date.now()) {
@@ -329,7 +329,7 @@ export async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode
 
   // 2. Check Gmail OAuth Configuration & Active Poller
   try {
-    const merchant = ctx.merchantRepo?.findById ? ctx.merchantRepo.findById(merchantId) : null;
+    const merchant = ctx.merchantRepo?.findById ? await ctx.merchantRepo.findById(merchantId) : null;
     const gmailConfig = merchant?.branding?.gmailConfig || {};
     const hasRefreshToken = Boolean(gmailConfig.refreshToken && gmailConfig.refreshToken.trim());
     const hasApiKey = Boolean(gmailConfig.apiKey && gmailConfig.apiKey.trim());
@@ -458,18 +458,18 @@ export async function checkUpiServerHealth(ctx, enabledMethods = [], sellingMode
 export function registerCheckoutRoutes(server, ctx) {
   // GET /api/v1/checkout/:id/state
   server.get('/api/v1/checkout/:id/state', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Checkout session not found: ${params.id}` });
       return;
     }
 
     // Server-side Ban & Fraud Enforcement
-    const isCustomerBanned = session.customerId && ctx.customerRepo && ctx.customerRepo.isBanned(session.customerId);
+    const isCustomerBanned = session.customerId && ctx.customerRepo && await ctx.customerRepo.isBanned(session.customerId);
     const isSessionBlocked = session.status === 'BLOCKED' || (session.metadata?.banReason === 'FRAUDULENT_PAYMENT_INJECTION');
 
     if (isCustomerBanned || isSessionBlocked) {
-      const cust = session.customerId ? ctx.customerRepo.findById(session.customerId) : null;
+      const cust = session.customerId ? await ctx.customerRepo.findById(session.customerId) : null;
       HttpServer.json(res, 200, {
         id: session.id,
         orderId: session.orderId,
@@ -492,24 +492,24 @@ export function registerCheckoutRoutes(server, ctx) {
     // Authoritative Server-Side Expiration Enforcer
     const now = Date.now();
     if (session.status === PaymentStatus.ACTIVE && session.expiresAt && session.expiresAt.getTime() <= now) {
-      ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.EXPIRED);
+      await ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.EXPIRED);
       session.status = PaymentStatus.EXPIRED;
       if (session.receivingAccountId) {
-        ctx.queueEngine.promoteNext(session.receivingAccountId);
+        await ctx.queueEngine.promoteNext(session.receivingAccountId);
       }
       server.broadcastSse(session.id, 'status_change', { status: PaymentStatus.EXPIRED });
     } else if (session.status === PaymentStatus.PROCESSING && session.processingExpiresAt && session.processingExpiresAt.getTime() <= now) {
-      ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.FAILED);
+      await ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.FAILED);
       session.status = PaymentStatus.FAILED;
       if (session.receivingAccountId) {
-        ctx.queueEngine.promoteNext(session.receivingAccountId);
+        await ctx.queueEngine.promoteNext(session.receivingAccountId);
       }
       server.broadcastSse(session.id, 'status_change', { status: PaymentStatus.FAILED });
     }
 
     // Terminal session handling: if session is terminal, return terminal state directly (CASE 4)
     if ([PaymentStatus.SUCCESS, PaymentStatus.OBSERVED_SUCCESS, PaymentStatus.RECONCILED, PaymentStatus.MANUAL_REVIEW, PaymentStatus.FAILED, PaymentStatus.EXPIRED, PaymentStatus.CANCELLED].includes(session.status)) {
-      const merchant = ctx.merchantRepo.findById(session.merchantId);
+      const merchant = await ctx.merchantRepo.findById(session.merchantId);
       const branding = sanitizePublicBranding(merchant?.branding || {});
       const terminalMarkexMeta = session.metadata ? {
         courseId: session.metadata.courseId || null,
@@ -547,23 +547,23 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     // Device-level session binding validation (Section 8 & 9)
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
     }
 
-    const merchant = ctx.merchantRepo.findById(session.merchantId);
+    const merchant = await ctx.merchantRepo.findById(session.merchantId);
     const snapshot = session.metadata?.receivingAccountSnapshot;
     let receivingAccount = session.receivingAccountId
-      ? ctx.accountRepo.findById(session.receivingAccountId)
+      ? await ctx.accountRepo.findById(session.receivingAccountId)
       : null;
 
     if (!receivingAccount && snapshot?.id) {
-      receivingAccount = ctx.accountRepo.findById(snapshot.id);
+      receivingAccount = await ctx.accountRepo.findById(snapshot.id);
     }
     if (!receivingAccount && [PaymentMethod.UPI, PaymentMethod.MANUAL_UPI].includes(session.method)) {
-      receivingAccount = ctx.accountRepo.findActiveForMerchant(session.merchantId);
+      receivingAccount = await ctx.accountRepo.findActiveForMerchant(session.merchantId);
     }
 
     // Invariant: Prefer immutable session snapshot VPA to prevent live VPA mutations from altering open checkout sessions (Issue #27)
@@ -580,7 +580,7 @@ export function registerCheckoutRoutes(server, ctx) {
     } else if (session.status === PaymentStatus.PROCESSING && session.processingExpiresAt) {
       timeRemainingSeconds = Math.max(0, Math.ceil((session.processingExpiresAt.getTime() - now) / 1000));
     } else if (session.status === PaymentStatus.QUEUED) {
-      timeRemainingSeconds = ctx.queueEngine.calculateEstimatedWaitSeconds(
+      timeRemainingSeconds = await ctx.queueEngine.calculateEstimatedWaitSeconds(
         session.receivingAccountId,
         session.queuePosition
       );
@@ -642,12 +642,12 @@ export function registerCheckoutRoutes(server, ctx) {
     //   - the customer themselves, presenting their own customer session token.
     // An anonymous holder of a payment id must not receive name/email/phone.
     const isOwnerCaller = isPaymentOwner(req, session, ctx) || isInternalServiceRequest(req);
-    const tokenAuth = (bearerToken && ctx.customerSessionRepo) ? ctx.customerSessionRepo.findByToken(bearerToken) : null;
+    const tokenAuth = (bearerToken && ctx.customerSessionRepo) ? await ctx.customerSessionRepo.findByToken(bearerToken) : null;
     const isSelfCaller = Boolean(tokenAuth?.customer && session.customerId && tokenAuth.customer.id === session.customerId);
 
     let customer = null;
     if (session.customerId && ctx.customerRepo && (isOwnerCaller || isSelfCaller)) {
-      const c = ctx.customerRepo.findById(session.customerId);
+      const c = await ctx.customerRepo.findById(session.customerId);
       if (c) {
         customer = {
           id: c.id,
@@ -693,7 +693,7 @@ export function registerCheckoutRoutes(server, ctx) {
     let hasActiveSessionConflict = false;
     let conflictingSession = null;
     const conflictingActive = ctx.sessionRepo.findConflictingActiveSession
-      ? ctx.sessionRepo.findConflictingActiveSession({
+      ? await ctx.sessionRepo.findConflictingActiveSession({
           customerId: session.customerId,
           deviceId: requestingDeviceId || session.deviceId || null,
           excludeSessionId: session.id
@@ -807,7 +807,7 @@ export function registerCheckoutRoutes(server, ctx) {
       ((req.headers['authorization'] || '').startsWith('Bearer ') ? req.headers['authorization'].slice(7).trim() : null);
     const { customerId } = body;
 
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -831,7 +831,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const authContext = ctx.customerSessionRepo.findByToken(token.trim());
+    const authContext = await ctx.customerSessionRepo.findByToken(token.trim());
     if (!authContext || !authContext.customer) {
       HttpServer.json(res, 401, {
         error: 'Invalid or expired customer session token.',
@@ -850,13 +850,13 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     // Device-level session binding validation
-    const deviceAccess = checkSessionDeviceAccess(session, req, body, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, body, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
     }
     if (deviceAccess.boundDeviceId && ctx.deviceRepo) {
-      try { ctx.deviceRepo.associateCustomer(deviceAccess.boundDeviceId, customer.id); } catch {}
+      try { await ctx.deviceRepo.associateCustomer(deviceAccess.boundDeviceId, customer.id); } catch {}
     }
 
     if (session.customerId && session.customerId !== customer.id) {
@@ -868,7 +868,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // Check for active customer session conflict
     const otherActive = ctx.sessionRepo.findActiveForCustomer
-      ? ctx.sessionRepo.findActiveForCustomer(customer.id, params.id)
+      ? await ctx.sessionRepo.findActiveForCustomer(customer.id, params.id)
       : null;
 
     let hasActiveSessionConflict = false;
@@ -945,9 +945,9 @@ export function registerCheckoutRoutes(server, ctx) {
     let queueResult = { status: session.status, queuePosition: session.queuePosition, expiresAt: session.expiresAt };
     const targetAccountId = session.receivingAccountId || ctx.accountRepo?.findActiveForMerchant(session.merchantId)?.id || session.metadata?.receivingAccountSnapshot?.id;
     if (!hasActiveSessionConflict && session.status === PaymentStatus.INITIATED && targetAccountId) {
-      queueResult = ctx.queueEngine.enqueueOrActivate(session.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
+      queueResult = await ctx.queueEngine.enqueueOrActivate(session.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
       if (queueResult.expiresAt) {
-        ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
+        await ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
       }
       server.broadcastSse(session.id, 'status_change', {
         status: queueResult.status,
@@ -963,7 +963,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: session.id,
@@ -1000,7 +1000,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     const body = await HttpServer.parseBody(req).catch(() => ({}));
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -1024,10 +1024,10 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    let customer = ctx.customerRepo.findByMobile(studentMobile);
+    let customer = await ctx.customerRepo.findByMobile(studentMobile);
     if (!customer) {
       try {
-        customer = ctx.customerRepo.create({
+        customer = await ctx.customerRepo.create({
           name: studentName,
           mobileNumber: studentMobile,
           email: studentEmail || undefined,
@@ -1037,7 +1037,7 @@ export function registerCheckoutRoutes(server, ctx) {
         HttpServer.json(res, 400, { error: err.message || 'Could not create guest student record.' });
         return;
       }
-    } else if (ctx.customerRepo.isBanned(customer.id)) {
+    } else if (await ctx.customerRepo.isBanned(customer.id)) {
       HttpServer.json(res, 403, {
         status: 'BLOCKED',
         error: 'This mobile number is blocked from checkout.',
@@ -1050,7 +1050,7 @@ export function registerCheckoutRoutes(server, ctx) {
           `UPDATE customers SET name = ?, updated_at = ? WHERE id = ?`,
           [studentName, new Date().toISOString(), customer.id]
         );
-        customer = ctx.customerRepo.findById(customer.id);
+        customer = await ctx.customerRepo.findById(customer.id);
       } catch {}
     }
 
@@ -1061,7 +1061,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const guestSession = ctx.customerSessionRepo.create({
+    const guestSession = await ctx.customerSessionRepo.create({
       customerId: customer.id,
       ipAddress: req.socket?.remoteAddress || null,
       userAgent: req.headers['user-agent'] || null,
@@ -1097,7 +1097,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // Ensure receiving account is assigned for UPI QR generation
     if (!session.receivingAccountId && targetAccountId) {
-      const account = ctx.accountRepo.findById(targetAccountId);
+      const account = await ctx.accountRepo.findById(targetAccountId);
       ctx.db.execute(`
         UPDATE payment_sessions
         SET receiving_account_id = ?,
@@ -1118,9 +1118,9 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (session.status === PaymentStatus.INITIATED && targetAccountId) {
-      queueResult = ctx.queueEngine.enqueueOrActivate(params.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
+      queueResult = await ctx.queueEngine.enqueueOrActivate(params.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
       if (queueResult.expiresAt) {
-        ctx.timingEngine.startActiveTimer(params.id, queueResult.expiresAt);
+        await ctx.timingEngine.startActiveTimer(params.id, queueResult.expiresAt);
       }
       server.broadcastSse(params.id, 'status_change', {
         status: queueResult.status,
@@ -1130,7 +1130,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: params.id,
@@ -1162,7 +1162,7 @@ export function registerCheckoutRoutes(server, ctx) {
   // POST /api/v1/checkout/:id/submit-for-review — student claims payment; admin must confirm
   server.post('/api/v1/checkout/:id/submit-for-review', async (req, res, params) => {
     const body = await HttpServer.parseBody(req).catch(() => ({}));
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: 'Payment session not found.' });
       return;
@@ -1222,7 +1222,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: session.id,
@@ -1257,13 +1257,13 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/retry-new-payment - Cancels previous abandoned active session and activates new payment
   server.post('/api/v1/checkout/:id/retry-new-payment', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -1313,14 +1313,14 @@ export function registerCheckoutRoutes(server, ctx) {
     `, [session.id, customerId, customerId, requestingDeviceId, requestingDeviceId]);
 
     for (const c of conflicting) {
-      ctx.sessionRepo.transitionToTerminal(c.id, PaymentStatus.CANCELLED, {
+      await ctx.sessionRepo.transitionToTerminal(c.id, PaymentStatus.CANCELLED, {
         reason: 'USER_RETRY_NEW_PAYMENT',
         replacedBySessionId: session.id
       });
       if (ctx.timingEngine) {
-        ctx.timingEngine.cancelActiveTimer(c.id);
+        await ctx.timingEngine.cancelActiveTimer(c.id);
         if (typeof ctx.timingEngine.clearTimers === 'function') {
-          ctx.timingEngine.clearTimers(c.id);
+          await ctx.timingEngine.clearTimers(c.id);
         }
       }
       server.broadcastSse(c.id, 'status_change', {
@@ -1330,7 +1330,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     // Target receiving account
-    const activeMerchantAcc = ctx.accountRepo ? ctx.accountRepo.findActiveForMerchant(session.merchantId) : null;
+    const activeMerchantAcc = ctx.accountRepo ? await ctx.accountRepo.findActiveForMerchant(session.merchantId) : null;
     const targetAccountId = activeMerchantAcc?.id ||
       session.receivingAccountId ||
       session.metadata?.receivingAccountSnapshot?.id;
@@ -1343,9 +1343,9 @@ export function registerCheckoutRoutes(server, ctx) {
     // Now activate current session immediately on the newly freed slot
     let queueResult = { status: session.status, queuePosition: session.queuePosition, expiresAt: session.expiresAt };
     if (targetAccountId) {
-      queueResult = ctx.queueEngine.enqueueOrActivate(session.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
+      queueResult = await ctx.queueEngine.enqueueOrActivate(session.id, targetAccountId, ctx.timingEngine?.activeDurationMs || 300000);
       if (queueResult.expiresAt) {
-        ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
+        await ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
       }
       server.broadcastSse(session.id, 'status_change', {
         status: queueResult.status,
@@ -1358,10 +1358,10 @@ export function registerCheckoutRoutes(server, ctx) {
         orderId: session.orderId,
         amountPaise: session.amountPaise ? session.amountPaise.toString() : '0'
       });
-      ctx.sessionRepo.reindexQueue(targetAccountId);
+      await ctx.sessionRepo.reindexQueue(targetAccountId);
     }
 
-    const updated = ctx.sessionRepo.findById(session.id);
+    const updated = await ctx.sessionRepo.findById(session.id);
     HttpServer.json(res, 200, {
       success: true,
       paymentId: updated.id,
@@ -1375,7 +1375,7 @@ export function registerCheckoutRoutes(server, ctx) {
   // Manual UTR is a customer claim for independent review, never a payment confirmation.
   server.post('/api/v1/checkout/:id/manual-utr', async (req, res, params) => {
     const body = await HttpServer.parseBody(req).catch(() => ({}));
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: 'Payment session not found.' });
       return;
@@ -1388,7 +1388,7 @@ export function registerCheckoutRoutes(server, ctx) {
       HttpServer.json(res, 409, { error: 'This checkout is no longer accepting a transaction reference.' });
       return;
     }
-    const deviceAccess = checkSessionDeviceAccess(session, req, body, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, body, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -1399,7 +1399,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
     try {
-      const updated = ctx.sessionRepo.submitManualUtr(session.id, utr);
+      const updated = await ctx.sessionRepo.submitManualUtr(session.id, utr);
       if (updated.status === PaymentStatus.MANUAL_REVIEW && session.status !== PaymentStatus.MANUAL_REVIEW) {
         ctx.eventEmitter?.emit('PAYMENT.MANUAL_REVIEW', {
           paymentId: updated.id,
@@ -1433,7 +1433,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/payment-done
   server.post('/api/v1/checkout/:id/payment-done', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -1444,7 +1444,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -1461,9 +1461,9 @@ export function registerCheckoutRoutes(server, ctx) {
 
     const now = Date.now();
     if (session.status === PaymentStatus.ACTIVE && session.expiresAt && session.expiresAt.getTime() <= now) {
-      ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.EXPIRED);
+      await ctx.sessionRepo.transitionToTerminal(session.id, PaymentStatus.EXPIRED);
       if (session.receivingAccountId) {
-        ctx.queueEngine.promoteNext(session.receivingAccountId);
+        await ctx.queueEngine.promoteNext(session.receivingAccountId);
       }
       server.broadcastSse(session.id, 'status_change', { status: PaymentStatus.EXPIRED });
       HttpServer.json(res, 400, {
@@ -1479,7 +1479,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const updated = ctx.timingEngine.handlePaymentDone(params.id);
+    const updated = await ctx.timingEngine.handlePaymentDone(params.id);
 
     // Broadcast SSE update
     server.broadcastSse(params.id, 'status_change', {
@@ -1502,7 +1502,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/cancel
   server.post('/api/v1/checkout/:id/cancel', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -1527,13 +1527,13 @@ export function registerCheckoutRoutes(server, ctx) {
     // Cancelling releases the merchant's scarce UPI slot and ends a live payment, so it is
     // subject to the same device-binding check as the other state-changing checkout actions.
     // Without this, anyone holding a payment id could grief an in-flight checkout.
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
     }
 
-    const updated = ctx.timingEngine.handleCancel(params.id);
+    const updated = await ctx.timingEngine.handleCancel(params.id);
 
     server.broadcastSse(params.id, 'status_change', {
       status: PaymentStatus.CANCELLED
@@ -1550,13 +1550,13 @@ export function registerCheckoutRoutes(server, ctx) {
     const body = await HttpServer.parseBody(req);
     const { method } = body;
 
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, body, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, body, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -1588,7 +1588,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const merchant = ctx.merchantRepo.findById(session.merchantId);
+    const merchant = await ctx.merchantRepo.findById(session.merchantId);
     const merchantBranding = merchant?.branding || {};
     const isCounterRequested = method === PaymentMethod.CASH_COUNTER || method === PaymentMethod.CARD_COUNTER;
     let sellingMode = merchantBranding.sellingMode || (isCounterRequested ? 'OFFLINE' : 'ONLINE');
@@ -1624,7 +1624,7 @@ export function registerCheckoutRoutes(server, ctx) {
       }
 
       if (ctx.timingEngine) {
-        ctx.timingEngine.cancelActiveTimer(session.id);
+        await ctx.timingEngine.cancelActiveTimer(session.id);
       }
 
       if (isCod || isBankTransfer) {
@@ -1638,7 +1638,7 @@ export function registerCheckoutRoutes(server, ctx) {
         session.expiresAt = newExpiresAt;
 
         if (ctx.timingEngine) {
-          ctx.timingEngine.startActiveTimer(session.id, newExpiresAt);
+          await ctx.timingEngine.startActiveTimer(session.id, newExpiresAt);
         }
         timeRemainingSeconds = 300;
       } else {
@@ -1654,13 +1654,13 @@ export function registerCheckoutRoutes(server, ctx) {
       // Switching back to UPI:
       // Cancel any running parallel COD timer
       if (ctx.timingEngine) {
-        ctx.timingEngine.cancelActiveTimer(session.id);
+        await ctx.timingEngine.cancelActiveTimer(session.id);
       }
 
       // Re-resolve active receiving account and enqueue/activate into UPI queue
-      const receivingAccount = ctx.accountRepo.findActiveForMerchant(session.merchantId);
+      const receivingAccount = await ctx.accountRepo.findActiveForMerchant(session.merchantId);
       if (receivingAccount) {
-        const queueResult = ctx.queueEngine.enqueueOrActivate(session.id, receivingAccount.id);
+        const queueResult = await ctx.queueEngine.enqueueOrActivate(session.id, receivingAccount.id);
         updates += `, receiving_account_id = ?, status = ?, queue_position = ?, expires_at = ?`;
         updateParams.push(
           receivingAccount.id,
@@ -1674,7 +1674,7 @@ export function registerCheckoutRoutes(server, ctx) {
         session.expiresAt = queueResult.expiresAt;
 
         if (queueResult.expiresAt && ctx.timingEngine && queueResult.status === PaymentStatus.ACTIVE) {
-          ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
+          await ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
         }
         if (queueResult.expiresAt) {
           timeRemainingSeconds = Math.max(0, Math.ceil((queueResult.expiresAt.getTime() - Date.now()) / 1000));
@@ -1696,10 +1696,10 @@ export function registerCheckoutRoutes(server, ctx) {
         WHERE id = ? AND (current_active_session_id = ? OR current_active_session_id IS NULL)
       `, [nowIso, oldReceivingAccountId, session.id]);
 
-      const promoted = ctx.queueEngine.promoteNext(oldReceivingAccountId);
+      const promoted = await ctx.queueEngine.promoteNext(oldReceivingAccountId);
       if (promoted) {
         if (promoted.expiresAt && ctx.timingEngine) {
-          ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
+          await ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
         }
         server.broadcastSse(promoted.id, 'status_change', {
           status: PaymentStatus.ACTIVE,
@@ -1710,7 +1710,7 @@ export function registerCheckoutRoutes(server, ctx) {
           promotedId: promoted.id
         });
       } else {
-        ctx.sessionRepo.reindexQueue(oldReceivingAccountId);
+        await ctx.sessionRepo.reindexQueue(oldReceivingAccountId);
       }
     }
 
@@ -1736,7 +1736,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: session.id,
@@ -1793,13 +1793,13 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/confirm-cod (Confirm Cash on Delivery Order)
   server.post('/api/v1/checkout/:id/confirm-cod', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -1823,7 +1823,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const merchant = ctx.merchantRepo.findById(session.merchantId);
+    const merchant = await ctx.merchantRepo.findById(session.merchantId);
     const branding = merchant?.branding || {};
     const sellingMode = branding.sellingMode || (branding.enabledPaymentMethods?.some(m => m === 'CASH_COUNTER' || m === 'CARD_COUNTER') ? 'OFFLINE' : 'ONLINE');
     if (sellingMode !== 'ONLINE') {
@@ -1840,7 +1840,7 @@ export function registerCheckoutRoutes(server, ctx) {
     // Cancel Active Timer
     if (ctx.timingEngine) {
       if (typeof ctx.timingEngine.cancelActiveTimer === 'function') {
-        ctx.timingEngine.cancelActiveTimer(session.id);
+        await ctx.timingEngine.cancelActiveTimer(session.id);
       }
     }
 
@@ -1872,10 +1872,10 @@ export function registerCheckoutRoutes(server, ctx) {
     });
 
     if (oldReceivingAccountId && ctx.queueEngine) {
-      const promoted = ctx.queueEngine.promoteNext(oldReceivingAccountId);
+      const promoted = await ctx.queueEngine.promoteNext(oldReceivingAccountId);
       if (promoted) {
         if (promoted.expiresAt && ctx.timingEngine) {
-          ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
+          await ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
         }
         server.broadcastSse(promoted.id, 'status_change', {
           status: PaymentStatus.ACTIVE,
@@ -1888,11 +1888,11 @@ export function registerCheckoutRoutes(server, ctx) {
       }
     }
 
-    const updated = ctx.sessionRepo.findById(session.id);
+    const updated = await ctx.sessionRepo.findById(session.id);
 
     let customer = null;
     if (updated.customerId && ctx.customerRepo) {
-      const c = ctx.customerRepo.findById(updated.customerId);
+      const c = await ctx.customerRepo.findById(updated.customerId);
       if (c) {
         customer = {
           id: c.id,
@@ -1904,7 +1904,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: updated.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: updated.id,
@@ -1923,7 +1923,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // Webhook dispatch
     if (ctx.webhookEngine && merchant && merchant.webhookUrl) {
-      ctx.webhookEngine.dispatch('SUCCESS', updated).catch(err => console.error('COD Webhook dispatch failed:', err.message));
+      await ctx.webhookEngine.dispatch('SUCCESS', updated).catch(err => console.error('COD Webhook dispatch failed:', err.message));
     }
 
     HttpServer.json(res, 200, {
@@ -1943,14 +1943,14 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // GET /api/v1/checkout/:id/cod (Query COD order info)
   server.get('/api/v1/checkout/:id/cod', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
     let customer = null;
     if (isPaymentOwner(req, session, ctx) && session.customerId && ctx.customerRepo) {
-      const c = ctx.customerRepo.findById(session.customerId);
+      const c = await ctx.customerRepo.findById(session.customerId);
       if (c) {
         customer = {
           id: c.id,
@@ -1976,20 +1976,20 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/expire (Explicit Client Expiry Trigger)
   server.post('/api/v1/checkout/:id/expire', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
     }
 
     if (session.status === PaymentStatus.ACTIVE) {
-      ctx.timingEngine.handleActiveTimerExpiration(session.id);
+      await ctx.timingEngine.handleActiveTimerExpiration(session.id);
       server.broadcastSse(session.id, 'status_change', { status: PaymentStatus.EXPIRED });
     }
 
@@ -2005,13 +2005,13 @@ export function registerCheckoutRoutes(server, ctx) {
     const body = await HttpServer.parseBody(req);
     const { action, details } = body;
 
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
     }
 
-    const deviceAccess = checkSessionDeviceAccess(session, req, body, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, body, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -2022,7 +2022,7 @@ export function registerCheckoutRoutes(server, ctx) {
       req.headers['x-customer-token'] ||
       ((req.headers['authorization'] || '').startsWith('Bearer ') ? req.headers['authorization'].slice(7).trim() : null);
     const authContext = (token && typeof token === 'string' && ctx.customerSessionRepo)
-      ? ctx.customerSessionRepo.findByToken(token.trim())
+      ? await ctx.customerSessionRepo.findByToken(token.trim())
       : null;
 
     const hasValidCustomerToken = Boolean(
@@ -2040,7 +2040,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: session.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: session.id,
@@ -2069,7 +2069,7 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // POST /api/v1/checkout/:id/simulate-observation (Inject simulated SMS / Email observation)
   server.post('/api/v1/checkout/:id/simulate-observation', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: 'Session not found' });
       return;
@@ -2091,7 +2091,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const result = pipeline.process({
+    const result = await pipeline.process({
       source,
       rawText,
       sender,
@@ -2122,7 +2122,7 @@ export function registerCheckoutRoutes(server, ctx) {
   // POST /api/v1/checkout/:id/end-and-restart-payment (or end-session-and-create-new)
   // Cancels previous session created on another device and creates a fresh payment session bound to current device
   async function handleEndAndRestartPayment(req, res, params) {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     const body = await HttpServer.parseBody(req).catch(() => ({}));
     const conflictingSessionId = body?.conflictingSessionId || body?.conflicting_session_id || null;
 
@@ -2131,7 +2131,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const targetSession = session || ctx.sessionRepo.findById(conflictingSessionId);
+    const targetSession = session || await ctx.sessionRepo.findById(conflictingSessionId);
     if (!targetSession) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -2143,7 +2143,7 @@ export function registerCheckoutRoutes(server, ctx) {
       return;
     }
 
-    const sourceSession = (conflictingSessionId ? ctx.sessionRepo.findById(conflictingSessionId) : null) || targetSession;
+    const sourceSession = (conflictingSessionId ? await ctx.sessionRepo.findById(conflictingSessionId) : null) || targetSession;
 
     // A settled order must not be restarted. The restarted session deliberately reuses the
     // merchant's order reference, and the unique (merchant_id, order_id) index rejects a
@@ -2201,7 +2201,7 @@ export function registerCheckoutRoutes(server, ctx) {
       req.headers['x-customer-token'] ||
       ((req.headers['authorization'] || '').startsWith('Bearer ') ? req.headers['authorization'].slice(7).trim() : null);
     const authCtx = (rawCustToken && ctx.customerSessionRepo)
-      ? ctx.customerSessionRepo.findByToken(String(rawCustToken).trim())
+      ? await ctx.customerSessionRepo.findByToken(String(rawCustToken).trim())
       : null;
     const authenticatedCustomerId = authCtx?.customer?.id || null;
 
@@ -2235,7 +2235,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (conflictingSessionId) {
-      const confSess = ctx.sessionRepo.findById(conflictingSessionId);
+      const confSess = await ctx.sessionRepo.findById(conflictingSessionId);
       if (confSess?.status === PaymentStatus.PROCESSING) {
         HttpServer.json(res, 409, {
           error: 'SESSION_PROCESSING',
@@ -2249,7 +2249,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (customerId && ctx.sessionRepo.findAllActiveOrPendingForCustomer) {
-      const custSessions = ctx.sessionRepo.findAllActiveOrPendingForCustomer(customerId);
+      const custSessions = await ctx.sessionRepo.findAllActiveOrPendingForCustomer(customerId);
       for (const cs of custSessions) {
         if (cs.status === PaymentStatus.PROCESSING) {
           HttpServer.json(res, 409, {
@@ -2273,7 +2273,7 @@ export function registerCheckoutRoutes(server, ctx) {
     // Also check if an active session on the receiving account belongs to the same order / customer
     const receivingAccountIdForLookup = targetSession.receivingAccountId || session?.receivingAccountId;
     if (receivingAccountIdForLookup && ctx.sessionRepo.findCurrentActiveOrProcessing) {
-      const activeOnAcc = ctx.sessionRepo.findCurrentActiveOrProcessing(receivingAccountIdForLookup);
+      const activeOnAcc = await ctx.sessionRepo.findCurrentActiveOrProcessing(receivingAccountIdForLookup);
       if (activeOnAcc && activeOnAcc.deviceId !== newDeviceId) {
         const cleanTargetOrder = targetSession.orderId ? targetSession.orderId.replace(/-R\d+$/, '') : '';
         const cleanActiveOrder = activeOnAcc.orderId ? activeOnAcc.orderId.replace(/-R\d+$/, '') : '';
@@ -2291,7 +2291,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     // Resolve receiving account ID for new session (guarantee active account for merchant)
-    const activeMerchantAcc = ctx.accountRepo ? ctx.accountRepo.findActiveForMerchant(sourceSession.merchantId) : null;
+    const activeMerchantAcc = ctx.accountRepo ? await ctx.accountRepo.findActiveForMerchant(sourceSession.merchantId) : null;
     const targetReceivingAccountId = activeMerchantAcc?.id || sourceSession.receivingAccountId;
 
     const affectedAccountIds = new Set();
@@ -2309,15 +2309,15 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // 2. Terminate all old sessions, cancel timers, and broadcast SSE
     for (const [sId, sObj] of sessionsToTerminate.entries()) {
-      ctx.sessionRepo.transitionToTerminal(sId, PaymentStatus.CANCELLED, {
+      await ctx.sessionRepo.transitionToTerminal(sId, PaymentStatus.CANCELLED, {
         reason: 'REPLACED_ON_ANOTHER_DEVICE',
         replacedByDeviceId: newDeviceId
       });
 
       if (ctx.timingEngine) {
-        ctx.timingEngine.cancelActiveTimer(sId);
+        await ctx.timingEngine.cancelActiveTimer(sId);
         if (typeof ctx.timingEngine.clearTimers === 'function') {
-          ctx.timingEngine.clearTimers(sId);
+          await ctx.timingEngine.clearTimers(sId);
         }
       }
 
@@ -2341,14 +2341,14 @@ export function registerCheckoutRoutes(server, ctx) {
       }
 
       if (ctx.sessionRepo.reindexQueue) {
-        ctx.sessionRepo.reindexQueue(accId);
+        await ctx.sessionRepo.reindexQueue(accId);
       }
 
       if (ctx.queueEngine && typeof ctx.queueEngine.promoteNext === 'function') {
-        const promoted = ctx.queueEngine.promoteNext(accId);
+        const promoted = await ctx.queueEngine.promoteNext(accId);
         if (promoted) {
           if (ctx.timingEngine && promoted.expiresAt) {
-            ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
+            await ctx.timingEngine.startActiveTimer(promoted.id, promoted.expiresAt);
           }
           server.broadcastSse(promoted.id, 'status_change', {
             status: PaymentStatus.ACTIVE,
@@ -2370,11 +2370,11 @@ export function registerCheckoutRoutes(server, ctx) {
 
     // 5. Touch verified device
     if (newDeviceId && ctx.deviceRepo) {
-      ctx.deviceRepo.touch(newDeviceId);
+      await ctx.deviceRepo.touch(newDeviceId);
     }
 
     // 6. Create fresh payment session bound to newDeviceId
-    const newSession = ctx.sessionRepo.create({
+    const newSession = await ctx.sessionRepo.create({
       merchantId: sourceSession.merchantId,
       customerId: customerId || sourceSession.customerId,
       receivingAccountId: targetReceivingAccountId,
@@ -2393,15 +2393,15 @@ export function registerCheckoutRoutes(server, ctx) {
     });
 
     if (customerId && ctx.deviceRepo) {
-      try { ctx.deviceRepo.associateCustomer(newDeviceId, customerId); } catch {}
+      try { await ctx.deviceRepo.associateCustomer(newDeviceId, customerId); } catch {}
     }
 
     // 7. Enqueue or activate new session if UPI
     let queueResult = { status: newSession.status, queuePosition: 0, expiresAt: null };
     if (newSession.receivingAccountId && (String(newSession.method).toUpperCase() === 'UPI' || !newSession.method)) {
-      queueResult = ctx.queueEngine.enqueueOrActivate(newSession.id, newSession.receivingAccountId, ctx.timingEngine?.activeDurationMs || 300000);
+      queueResult = await ctx.queueEngine.enqueueOrActivate(newSession.id, newSession.receivingAccountId, ctx.timingEngine?.activeDurationMs || 300000);
       if (queueResult.expiresAt && ctx.timingEngine) {
-        ctx.timingEngine.startActiveTimer(newSession.id, queueResult.expiresAt);
+        await ctx.timingEngine.startActiveTimer(newSession.id, queueResult.expiresAt);
       }
       server.broadcastSse(newSession.id, 'status_change', {
         status: queueResult.status,
@@ -2417,7 +2417,7 @@ export function registerCheckoutRoutes(server, ctx) {
     }
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: sourceSession.merchantId,
         entityType: 'PAYMENT_SESSION',
         entityId: newSession.id,
@@ -2452,12 +2452,12 @@ export function registerCheckoutRoutes(server, ctx) {
 
   // GET /api/v1/checkout/:id/stream and /events (SSE)
   server.get('/api/v1/checkout/:id/stream', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: 'Session not found' });
       return;
     }
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;
@@ -2466,12 +2466,12 @@ export function registerCheckoutRoutes(server, ctx) {
   });
 
   server.get('/api/v1/checkout/:id/events', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: 'Session not found' });
       return;
     }
-    const deviceAccess = checkSessionDeviceAccess(session, req, null, ctx);
+    const deviceAccess = await checkSessionDeviceAccess(session, req, null, ctx);
     if (!deviceAccess.allowed) {
       HttpServer.json(res, deviceAccess.statusCode || 409, deviceAccess.body);
       return;

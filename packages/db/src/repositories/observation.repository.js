@@ -9,7 +9,7 @@ export class ObservationRepository {
     this.db = db;
   }
 
-  create(data) {
+  async create(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const rawPayload = typeof data.rawPayload === 'object' ? JSON.stringify(data.rawPayload) : (data.rawPayload || '{}');
@@ -22,7 +22,7 @@ export class ObservationRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.receivingAccountId,
       data.source,
@@ -38,11 +38,11 @@ export class ObservationRepository {
       now
     ]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  findById(id) {
-    const row = this.db.queryOne('SELECT * FROM payment_observations WHERE id = ?', [id]);
+  async findById(id) {
+    const row = await this.db.queryOne('SELECT * FROM payment_observations WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapRow(row);
   }
@@ -53,10 +53,10 @@ export class ObservationRepository {
    *   channel, so after a cross-channel upgrade the unfiltered lookup may return another
    *   channel's row and hide a same-channel replay.
    */
-  findByFingerprint(fingerprintHash, source) {
+  async findByFingerprint(fingerprintHash, source) {
     const row = source
-      ? this.db.queryOne('SELECT * FROM payment_observations WHERE fingerprint_hash = ? AND source = ? LIMIT 1', [fingerprintHash, source])
-      : this.db.queryOne('SELECT * FROM payment_observations WHERE fingerprint_hash = ?', [fingerprintHash]);
+      ? await this.db.queryOne('SELECT * FROM payment_observations WHERE fingerprint_hash = ? AND source = ? LIMIT 1', [fingerprintHash, source])
+      : await this.db.queryOne('SELECT * FROM payment_observations WHERE fingerprint_hash = ?', [fingerprintHash]);
     if (!row) return null;
     return this.mapRow(row);
   }
@@ -67,13 +67,13 @@ export class ObservationRepository {
    * @param {string} fingerprintHash
    * @param {string} source
    */
-  findByFingerprintOrFamily(fingerprintHash, source) {
+  async findByFingerprintOrFamily(fingerprintHash, source) {
     const normalized = String(source || '').trim().toUpperCase();
-    if (!normalized) return this.findByFingerprint(fingerprintHash);
+    if (!normalized) return await this.findByFingerprint(fingerprintHash);
     if (normalized === 'GMAIL') {
-      return this.findByFingerprint(fingerprintHash, 'GMAIL');
+      return await this.findByFingerprint(fingerprintHash, 'GMAIL');
     }
-    const row = this.db.queryOne(
+    const row = await this.db.queryOne(
       `SELECT * FROM payment_observations
        WHERE fingerprint_hash = ?
          AND UPPER(source) IN ('SMS', 'SMS_GATEWAY', 'GOOGLE_MESSAGES', 'ANDROID_OBSERVER')
@@ -84,8 +84,8 @@ export class ObservationRepository {
     return this.mapRow(row);
   }
 
-  findUnattributed(receivingAccountId) {
-    const rows = this.db.query(`
+  async findUnattributed(receivingAccountId) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_observations
       WHERE receiving_account_id = ? AND attribution_status = ?
       ORDER BY observed_at ASC
@@ -94,8 +94,8 @@ export class ObservationRepository {
     return rows.map(r => this.mapRow(r));
   }
 
-  findUnmatchedForReconciliation(receivingAccountId) {
-    const rows = this.db.query(`
+  async findUnmatchedForReconciliation(receivingAccountId) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_observations
       WHERE receiving_account_id = ?
         AND attribution_status IN (?, ?, ?)
@@ -110,8 +110,8 @@ export class ObservationRepository {
     return rows.map(r => this.mapRow(r));
   }
 
-  findByReceivingAccount(receivingAccountId, limit = 50) {
-    const rows = this.db.query(`
+  async findByReceivingAccount(receivingAccountId, limit = 50) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_observations
       WHERE receiving_account_id = ?
       ORDER BY observed_at DESC
@@ -121,10 +121,10 @@ export class ObservationRepository {
     return rows.map(r => this.mapRow(r));
   }
 
-  markAttributed(id, paymentId) {
-    const current = this.findById(id);
+  async markAttributed(id, paymentId) {
+    const current = await this.findById(id);
     if (current?.bankReferenceNumber) {
-      const existingSameSession = this.db.queryOne(
+      const existingSameSession = await this.db.queryOne(
         `SELECT id FROM payment_observations
          WHERE bank_reference_number = ?
            AND attributed_payment_id = ?
@@ -137,66 +137,66 @@ export class ObservationRepository {
           ...(current.rawPayload || {}),
           corroboratedPaymentId: paymentId
         };
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_observations
           SET attribution_status = ?, raw_payload = ?
           WHERE id = ?
         `, [ObservationAttributionStatus.ATTRIBUTED, JSON.stringify(updatedPayload), id]);
-        return this.findById(id);
+        return await this.findById(id);
       }
     }
 
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_observations
       SET attribution_status = ?, attributed_payment_id = ?
       WHERE id = ?
     `, [ObservationAttributionStatus.ATTRIBUTED, paymentId, id]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  markDuplicate(id) {
-    this.db.execute(`
+  async markDuplicate(id) {
+    await this.db.execute(`
       UPDATE payment_observations
       SET attribution_status = ?
       WHERE id = ?
     `, [ObservationAttributionStatus.DUPLICATE_IGNORED, id]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  markAmbiguous(id) {
-    this.db.execute(`
+  async markAmbiguous(id) {
+    await this.db.execute(`
       UPDATE payment_observations
       SET attribution_status = ?
       WHERE id = ?
     `, [ObservationAttributionStatus.AMBIGUOUS, id]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  markLateUnmatched(id, candidatePaymentId = null) {
+  async markLateUnmatched(id, candidatePaymentId = null) {
     if (candidatePaymentId) {
-      const current = this.findById(id);
+      const current = await this.findById(id);
       const updatedPayload = {
         ...(current?.rawPayload || {}),
         lateMatchedSessionId: candidatePaymentId
       };
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_observations
         SET attribution_status = ?, raw_payload = ?
         WHERE id = ?
       `, [ObservationAttributionStatus.LATE_UNMATCHED, JSON.stringify(updatedPayload), id]);
-      return this.findById(id);
+      return await this.findById(id);
     }
 
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_observations
       SET attribution_status = ?
       WHERE id = ?
     `, [ObservationAttributionStatus.LATE_UNMATCHED, id]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
   mapRow(row) {

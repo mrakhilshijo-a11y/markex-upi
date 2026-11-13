@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { YoupiPaymentClient } from '@youpi/merchant-sdk';
-import { getCoinStoreWebhookSecret, resolveCourseAmount, listMarkexCourses, formatInrFromPaise } from '@youpi/common';
+import { getCoinStoreWebhookSecret, resolveCourseAmount, listMarkexCourses, formatInrFromPaise, loadRootEnv } from '@youpi/common';
 import crypto from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -84,15 +84,7 @@ export function renderTemplate(template, values) {
   });
 }
 
-// In production, reliably ensure environment variables from .env are loaded if not already provided
-if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'function') {
-  try {
-    const rootEnv = path.resolve(__dirname, '../../../.env');
-    if (fs.existsSync(rootEnv)) {
-      process.loadEnvFile(rootEnv);
-    }
-  } catch {}
-}
+loadRootEnv(path.resolve(__dirname, '../../..'));
 
 export class CoinWalletStoreServer {
   /**

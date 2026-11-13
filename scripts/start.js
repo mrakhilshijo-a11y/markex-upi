@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -6,18 +5,14 @@ import { runMigrations } from '../packages/db/src/migrate.js';
 import { startControlCenter } from '../apps/control-center/src/index.js';
 import { resolveRuntimeUrls } from '../packages/common/src/runtime-config.js';
 import { startCloudflaredSafely } from '../packages/common/src/tunnel-command.js';
+import { loadRootEnv } from '../packages/common/src/load-root-env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
-// In production, reliably ensure environment variables from .env are loaded first
-try {
-  const rootEnv = path.resolve(rootDir, '.env');
-  if (fs.existsSync(rootEnv) && typeof process.loadEnvFile === 'function') {
-    process.loadEnvFile(rootEnv);
-  }
-} catch {}
+// Load `.env` then `.env.local` (Neon) without overriding existing process.env
+loadRootEnv(rootDir);
 
 // Authoritative runtime mode enforcement (start.js takes absolute precedence).
 //
@@ -47,7 +42,7 @@ if (runInLocalhostMode) {
 
 // 1. Run database migrations & load persisted configuration (Part B3: never overwrite settings)
 console.log('[1/3] Loading persisted production database & settings...');
-const migrationResult = runMigrations();
+const migrationResult = await runMigrations();
 const merchant = migrationResult.defaultMerchant;
 const branding = merchant?.branding || {};
 

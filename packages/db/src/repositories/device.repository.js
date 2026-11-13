@@ -29,7 +29,7 @@ export class DeviceRepository {
    *   status?: string
    * }} data
    */
-  create(data) {
+  async create(data) {
     const id = data.id || `dev_${crypto.randomUUID()}`;
     const deviceToken = data.deviceToken || issueDeviceCredential(id);
     const now = new Date().toISOString();
@@ -43,7 +43,7 @@ export class DeviceRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.customerId || null,
       data.publicKey,
@@ -64,7 +64,7 @@ export class DeviceRepository {
 
     // The plaintext token is returned here and only here: it is issued to the registering
     // client once. Persisted storage keeps only the keyed blind index.
-    const created = this.findById(id);
+    const created = await this.findById(id);
     return created ? { ...created, deviceToken } : null;
   }
 
@@ -72,9 +72,9 @@ export class DeviceRepository {
    * Finds a device by its unique ID.
    * @param {string} id
    */
-  findById(id) {
+  async findById(id) {
     if (!id) return null;
-    const row = this.db.queryOne('SELECT * FROM devices WHERE id = ?', [id]);
+    const row = await this.db.queryOne('SELECT * FROM devices WHERE id = ?', [id]);
     return row ? this.mapRow(row) : null;
   }
 
@@ -84,11 +84,11 @@ export class DeviceRepository {
    * @param {string} presentedToken
    * @returns {boolean}
    */
-  verifyToken(deviceId, presentedToken) {
+  async verifyToken(deviceId, presentedToken) {
     if (!deviceId || typeof deviceId !== 'string' || !presentedToken || typeof presentedToken !== 'string') {
       return false;
     }
-    const row = this.db.queryOne(
+    const row = await this.db.queryOne(
       'SELECT id, device_token, status FROM devices WHERE id = ?',
       [deviceId]
     );
@@ -108,7 +108,7 @@ export class DeviceRepository {
     // Support legacy rows that stored the raw token prior to blind indexing, and upgrade them.
     if (safeEqual(presentedToken, row.device_token)) {
       try {
-        this.db.execute('UPDATE devices SET device_token = ? WHERE id = ?', [blindIndex(presentedToken, INDEX_NS), row.id]);
+        await this.db.execute('UPDATE devices SET device_token = ? WHERE id = ?', [blindIndex(presentedToken, INDEX_NS), row.id]);
       } catch {}
       return true;
     }
@@ -121,13 +121,13 @@ export class DeviceRepository {
    * @param {string} deviceId
    * @returns {string|null}
    */
-  rotateToken(deviceId) {
+  async rotateToken(deviceId) {
     if (!deviceId) return null;
-    const row = this.db.queryOne('SELECT id, status FROM devices WHERE id = ?', [deviceId]);
+    const row = await this.db.queryOne('SELECT id, status FROM devices WHERE id = ?', [deviceId]);
     if (!row || row.status !== 'ACTIVE') return null;
     const freshToken = issueDeviceCredential(deviceId);
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE devices SET device_token = ?, last_seen_at = ? WHERE id = ?',
       [blindIndex(freshToken, INDEX_NS), now, deviceId]
     );
@@ -138,21 +138,21 @@ export class DeviceRepository {
    * Finds a device by its active device token.
    * @param {string} token
    */
-  findByToken(token) {
+  async findByToken(token) {
     if (!token) return null;
-    let row = this.db.queryOne(
+    let row = await this.db.queryOne(
       'SELECT * FROM devices WHERE device_token = ? AND status = ?',
       [blindIndex(token, INDEX_NS), 'ACTIVE']
     );
     // Rows written before index-only storage held the raw token; re-index on first use.
     if (!row && typeof token === 'string' && token.startsWith('devtok_')) {
-      const legacy = this.db.queryOne(
+      const legacy = await this.db.queryOne(
         'SELECT * FROM devices WHERE device_token = ? AND status = ?',
         [token, 'ACTIVE']
       );
       if (legacy) {
         try {
-          this.db.execute('UPDATE devices SET device_token = ? WHERE id = ?', [blindIndex(token, INDEX_NS), legacy.id]);
+          await this.db.execute('UPDATE devices SET device_token = ? WHERE id = ?', [blindIndex(token, INDEX_NS), legacy.id]);
         } catch {}
         row = legacy;
       }
@@ -164,9 +164,9 @@ export class DeviceRepository {
    * Finds existing device by matching public key.
    * @param {string} publicKey
    */
-  findByPublicKey(publicKey) {
+  async findByPublicKey(publicKey) {
     if (!publicKey) return null;
-    const row = this.db.queryOne('SELECT * FROM devices WHERE public_key = ? LIMIT 1', [publicKey]);
+    const row = await this.db.queryOne('SELECT * FROM devices WHERE public_key = ? LIMIT 1', [publicKey]);
     return row ? this.mapRow(row) : null;
   }
 
@@ -175,9 +175,9 @@ export class DeviceRepository {
    * @param {string} customerId
    * @param {string} fingerprintHash
    */
-  findByCustomerAndFingerprint(customerId, fingerprintHash) {
+  async findByCustomerAndFingerprint(customerId, fingerprintHash) {
     if (!customerId || !fingerprintHash) return null;
-    const row = this.db.queryOne(
+    const row = await this.db.queryOne(
       'SELECT * FROM devices WHERE customer_id = ? AND fingerprint_hash = ? AND status = "ACTIVE" LIMIT 1',
       [customerId, fingerprintHash]
     );
@@ -188,9 +188,9 @@ export class DeviceRepository {
    * Finds all devices registered for a customer.
    * @param {string} customerId
    */
-  findByCustomerId(customerId) {
+  async findByCustomerId(customerId) {
     if (!customerId) return [];
-    const rows = this.db.query(
+    const rows = await this.db.query(
       'SELECT * FROM devices WHERE customer_id = ? ORDER BY last_seen_at DESC',
       [customerId]
     );
@@ -202,23 +202,23 @@ export class DeviceRepository {
    * @param {string} deviceId
    * @param {string} customerId
    */
-  associateCustomer(deviceId, customerId) {
+  async associateCustomer(deviceId, customerId) {
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE devices SET customer_id = ?, last_seen_at = ? WHERE id = ?',
       [customerId, now, deviceId]
     );
-    return this.findById(deviceId);
+    return await this.findById(deviceId);
   }
 
   /**
    * Updates last seen timestamp for a device.
    * @param {string} deviceId
    */
-  touch(deviceId) {
+  async touch(deviceId) {
     if (!deviceId) return;
     try {
-      this.db.execute(
+      await this.db.execute(
         'UPDATE devices SET last_seen_at = ? WHERE id = ?',
         [new Date().toISOString(), deviceId]
       );
@@ -230,7 +230,7 @@ export class DeviceRepository {
    * @param {string} id
    * @param {Partial<any>} data
    */
-  update(id, data) {
+  async update(id, data) {
     const fields = [];
     const values = [];
 
@@ -255,8 +255,8 @@ export class DeviceRepository {
     values.push(new Date().toISOString());
 
     values.push(id);
-    this.db.execute(`UPDATE devices SET ${fields.join(', ')} WHERE id = ?`, values);
-    return this.findById(id);
+    await this.db.execute(`UPDATE devices SET ${fields.join(', ')} WHERE id = ?`, values);
+    return await this.findById(id);
   }
 
   /**

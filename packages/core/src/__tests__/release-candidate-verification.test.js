@@ -65,7 +65,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
 
   before(async () => {
     db = new Database({ inMemory: true });
-    runMigrations(db);
+    await runMigrations(db);
 
     merchantRepo = new MerchantRepository(db);
     accountRepo = new ReceivingAccountRepository(db);
@@ -74,7 +74,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
     obsRepo = new ObservationRepository(db);
     customerRepo = new CustomerRepository(db);
 
-    merchantA = merchantRepo.create({
+    merchantA = await merchantRepo.create({
       businessName: 'V-Visa Staging Agency',
       slug: 'vvisa-staging',
       contactEmail: 'ops@vvisa.in',
@@ -83,7 +83,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
       webhookSecret: 'secret_vvisa_phase9d'
     });
 
-    merchantB = merchantRepo.create({
+    merchantB = await merchantRepo.create({
       businessName: 'External Merchant Ltd',
       slug: 'external-merchant',
       contactEmail: 'admin@external.in',
@@ -92,7 +92,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
       webhookSecret: 'secret_external_phase9d'
     });
 
-    accountA = accountRepo.create({
+    accountA = await accountRepo.create({
       merchantId: merchantA.id,
       upiId: 'vvisab2b@icici',
       payeeName: 'V-Visa B2B Staging',
@@ -100,7 +100,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
       isActive: true
     });
 
-    accountB = accountRepo.create({
+    accountB = await accountRepo.create({
       merchantId: merchantB.id,
       upiId: 'external@hdfcbank',
       payeeName: 'External Merchant Ltd',
@@ -126,16 +126,16 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
 
   after(async () => {
     await apiInstance.close();
-    db.close();
+    await db.close();
   });
 
   // ==========================================================================
   // Check 1: Migration Correctness & Explicit Safe Stop
   // ==========================================================================
   describe('Check 1: Migration Correctness & Safe Stop', () => {
-    test('1.1: Migration preflight detects existing duplicate active sessions and halts explicitly', () => {
+    test('1.1: Migration preflight detects existing duplicate active sessions and halts explicitly', async () => {
       const testDb = new Database({ inMemory: true });
-      const { defaultMerchant } = runMigrations(testDb);
+      const { defaultMerchant } = await runMigrations(testDb);
       const acct = new ReceivingAccountRepository(testDb).findActiveForMerchant(defaultMerchant.id);
 
       // Drop unique index to simulate legacy database state
@@ -154,13 +154,13 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
 
       // runMigrations must halt with explicit preflight error
       assert.throws(() => {
-        runMigrations(testDb);
+        await runMigrations(testDb);
       }, /\[migrate\] Cannot apply idx_single_active_session: Detected 1 receiving account\(s\) with multiple active\/processing sessions/);
 
       // Resolving duplicate active state allows migration to proceed cleanly
       testDb.run("UPDATE payment_sessions SET status = 'EXPIRED' WHERE id = 'dup_1'");
       assert.doesNotThrow(() => {
-        runMigrations(testDb);
+        await runMigrations(testDb);
       });
 
       testDb.close();
@@ -335,12 +335,12 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
   // Check 4: End-to-End Payment Integrity & Anti-Replay Verification
   // ==========================================================================
   describe('Check 4: End-to-End Payment Integrity & Anti-Replay', () => {
-    test('4.1: End-to-end lifecycle: checkout -> observation -> attribution -> signed webhook payload', { skip: process.env.SKIP_FLAKY_TEST_4_1 === 'true' }, () => {
+    test('4.1: End-to-end lifecycle: checkout -> observation -> attribution -> signed webhook payload', { skip: process.env.SKIP_FLAKY_TEST_4_1 === 'true' }, async () => {
       db.run('UPDATE payment_observations SET attributed_payment_id = NULL WHERE attributed_payment_id IN (SELECT id FROM payment_sessions WHERE receiving_account_id = ?)', [accountA.id]);
       db.run('DELETE FROM payment_sessions WHERE receiving_account_id = ?', [accountA.id]);
 
       // 1. Create active session on Account A
-      const session = sessionRepo.create({
+      const session = await sessionRepo.create({
         merchantId: merchantA.id,
         receivingAccountId: accountA.id,
         amountPaise: 25000,
@@ -365,7 +365,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
       assert.equal(attrResult.paymentSessionId, session.id);
 
       // Verify session updated to OBSERVED_SUCCESS (single-channel banking observation)
-      const updatedSession = sessionRepo.findById(session.id);
+      const updatedSession = await sessionRepo.findById(session.id);
       assert.equal(updatedSession.status, PaymentStatus.OBSERVED_SUCCESS);
 
       // 4. Generate signed webhook payload
@@ -424,12 +424,12 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
   // Check 5: Operational & Recovery Verification
   // ==========================================================================
   describe('Check 5: Operational Recovery & Stale Session Sweep', () => {
-    test('5.1: RecoveryEngine cleans up stale ACTIVE sessions on system restart', () => {
+    test('5.1: RecoveryEngine cleans up stale ACTIVE sessions on system restart', async () => {
       db.run('UPDATE payment_observations SET attributed_payment_id = NULL WHERE attributed_payment_id IN (SELECT id FROM payment_sessions WHERE receiving_account_id = ?)', [accountA.id]);
       db.run('DELETE FROM payment_sessions WHERE receiving_account_id = ?', [accountA.id]);
 
       // Create a session whose expiration is in the past
-      const expiredSession = sessionRepo.create({
+      const expiredSession = await sessionRepo.create({
         merchantId: merchantA.id,
         receivingAccountId: accountA.id,
         amountPaise: 30000,
@@ -443,11 +443,11 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
       assert.ok(stats.expiredCount >= 1);
 
       // Verify the stale session transitioned to EXPIRED
-      const recovered = sessionRepo.findById(expiredSession.id);
+      const recovered = await sessionRepo.findById(expiredSession.id);
       assert.equal(recovered.status, PaymentStatus.EXPIRED);
 
       // Verify slot is freed: a new session can now be acquired as ACTIVE
-      const newSession = sessionRepo.create({
+      const newSession = await sessionRepo.create({
         merchantId: merchantA.id,
         receivingAccountId: accountA.id,
         amountPaise: 35000,
@@ -455,7 +455,7 @@ describe('Phase 9D: Release-Candidate Verification Suite', () => {
         status: PaymentStatus.QUEUED
       });
 
-      const newActive = sessionRepo.acquireSlotAtomic(
+      const newActive = await sessionRepo.acquireSlotAtomic(
         newSession.id,
         accountA.id,
         300000

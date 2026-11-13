@@ -107,7 +107,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
       }
     }
 
-    const links = ctx.paymentLinkRepo.listByMerchant(merchantId, { limit: 200 });
+    const links = await ctx.paymentLinkRepo.listByMerchant(merchantId, { limit: 200 });
     const linkStats = {
       active: links.filter((l) => l.status === 'ACTIVE').length,
       used: links.filter((l) => l.status === 'USED').length,
@@ -137,7 +137,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
   server.get('/api/v1/admin/payment-links', async (req, res) => {
     const merchantId = req.query?.merchantId || DEFAULT_MERCHANT_ID;
     const status = req.query?.status || undefined;
-    const links = ctx.paymentLinkRepo.listByMerchant(merchantId, { status, limit: Number(req.query?.limit) || 100 });
+    const links = await ctx.paymentLinkRepo.listByMerchant(merchantId, { status, limit: Number(req.query?.limit) || 100 });
     HttpServer.json(res, 200, {
       links: links.map((l) => serializeLink(ctx, l))
     });
@@ -180,7 +180,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
       return;
     }
 
-    const link = ctx.paymentLinkRepo.create({
+    const link = await ctx.paymentLinkRepo.create({
       merchantId,
       courseId: course.id,
       courseName: course.name,
@@ -199,7 +199,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
     });
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId,
         entityType: 'PAYMENT_LINK',
         entityId: link.id,
@@ -226,13 +226,13 @@ export function registerPaymentLinkRoutes(server, ctx) {
   server.post('/api/v1/admin/payment-links/:id/revoke', async (req, res, params) => {
     const body = await HttpServer.parseBody(req).catch(() => ({}));
     try {
-      const link = ctx.paymentLinkRepo.revoke(params.id, body.actorId || 'admin');
+      const link = await ctx.paymentLinkRepo.revoke(params.id, body.actorId || 'admin');
       if (!link) {
         HttpServer.json(res, 404, { error: 'Payment link not found.' });
         return;
       }
       if (ctx.auditRepo) {
-        ctx.auditRepo.log({
+        await ctx.auditRepo.log({
           merchantId: link.merchantId,
           entityType: 'PAYMENT_LINK',
           entityId: link.id,
@@ -250,7 +250,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
 
   // Public: resolve link metadata (no bank details, amount locked)
   server.get('/api/v1/pay-links/:token', async (req, res, params) => {
-    const resolved = ctx.paymentLinkRepo.resolvePublicToken(params.token);
+    const resolved = await ctx.paymentLinkRepo.resolvePublicToken(params.token);
     if (!resolved.ok) {
       HttpServer.json(res, resolved.code === 'NOT_FOUND' ? 404 : 410, {
         error: resolved.code,
@@ -285,7 +285,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
   // Public: open link → create locked payment session → return checkout URL
   server.post('/api/v1/pay-links/:token/open', async (req, res, params) => {
     const body = await HttpServer.parseBody(req).catch(() => ({}));
-    const resolved = ctx.paymentLinkRepo.resolvePublicToken(params.token);
+    const resolved = await ctx.paymentLinkRepo.resolvePublicToken(params.token);
     if (!resolved.ok) {
       HttpServer.json(res, resolved.code === 'NOT_FOUND' ? 404 : 410, {
         error: resolved.code,
@@ -298,7 +298,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
 
     // Reuse existing non-terminal session if still open
     if (link.paymentSessionId) {
-      const existing = ctx.sessionRepo.findById(link.paymentSessionId);
+      const existing = await ctx.sessionRepo.findById(link.paymentSessionId);
       if (existing && ![
         PaymentStatus.SUCCESS,
         PaymentStatus.RECONCILED,
@@ -317,7 +317,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
       }
       if (existing && (existing.status === PaymentStatus.SUCCESS || existing.status === PaymentStatus.RECONCILED)) {
         if (!link.allowReuseAfterPaid) {
-          ctx.paymentLinkRepo.markPaid(link.id);
+          await ctx.paymentLinkRepo.markPaid(link.id);
           HttpServer.json(res, 410, { error: 'ALREADY_PAID', message: 'This payment link was already completed.' });
           return;
         }
@@ -344,7 +344,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
       return;
     }
 
-    const receivingAccount = ctx.accountRepo.findActiveForMerchant(link.merchantId);
+    const receivingAccount = await ctx.accountRepo.findActiveForMerchant(link.merchantId);
     if (!receivingAccount) {
       HttpServer.json(res, 500, { error: 'No active UPI receiving account configured. Set MERCHANT_UPI_ID in server .env.' });
       return;
@@ -359,7 +359,7 @@ export function registerPaymentLinkRoutes(server, ctx) {
     const orderId = `MARKEX-${link.courseId.toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
     const paymentId = crypto.randomUUID();
 
-    const session = ctx.sessionRepo.create({
+    const session = await ctx.sessionRepo.create({
       id: paymentId,
       merchantId: link.merchantId,
       receivingAccountId: receivingAccount.id,
@@ -385,10 +385,10 @@ export function registerPaymentLinkRoutes(server, ctx) {
       }
     });
 
-    ctx.paymentLinkRepo.attachPaymentSession(link.id, session.id);
+    await ctx.paymentLinkRepo.attachPaymentSession(link.id, session.id);
 
     if (ctx.auditRepo) {
-      ctx.auditRepo.log({
+      await ctx.auditRepo.log({
         merchantId: link.merchantId,
         entityType: 'PAYMENT_LINK',
         entityId: link.id,

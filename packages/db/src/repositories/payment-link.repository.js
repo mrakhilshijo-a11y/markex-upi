@@ -30,7 +30,7 @@ export class PaymentLinkRepository {
    *   metadata?: object
    * }} data
    */
-  create(data) {
+  async create(data) {
     const id = crypto.randomUUID();
     const token = crypto.randomBytes(32).toString('hex');
     const now = new Date().toISOString();
@@ -38,7 +38,7 @@ export class PaymentLinkRepository {
       ? (data.expiresAt instanceof Date ? data.expiresAt.toISOString() : String(data.expiresAt))
       : null;
 
-    this.db.execute(`
+    await this.db.execute(`
       INSERT INTO payment_links (
         id, token, merchant_id, course_id, course_name, amount_paise,
         student_name, student_mobile, student_email, status, expires_at,
@@ -63,18 +63,18 @@ export class PaymentLinkRepository {
       JSON.stringify(data.metadata || {})
     ]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  findById(id) {
+  async findById(id) {
     if (!id) return null;
-    const row = this.db.queryOne('SELECT * FROM payment_links WHERE id = ?', [id]);
+    const row = await this.db.queryOne('SELECT * FROM payment_links WHERE id = ?', [id]);
     return row ? this.mapRow(row) : null;
   }
 
-  findByToken(token) {
+  async findByToken(token) {
     if (!token) return null;
-    const row = this.db.queryOne('SELECT * FROM payment_links WHERE token = ?', [token]);
+    const row = await this.db.queryOne('SELECT * FROM payment_links WHERE token = ?', [token]);
     return row ? this.mapRow(row) : null;
   }
 
@@ -83,7 +83,7 @@ export class PaymentLinkRepository {
    * @param {string} merchantId
    * @param {{ limit?: number, status?: string }} [options]
    */
-  listByMerchant(merchantId, options = {}) {
+  async listByMerchant(merchantId, options = {}) {
     const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 500);
     const params = [merchantId];
     let sql = 'SELECT * FROM payment_links WHERE merchant_id = ?';
@@ -93,15 +93,15 @@ export class PaymentLinkRepository {
     }
     sql += ' ORDER BY created_at DESC LIMIT ?';
     params.push(limit);
-    return this.db.query(sql, params).map((row) => this.mapRow(row));
+    return await this.db.query(sql, params).map((row) => this.mapRow(row));
   }
 
   /**
    * Validates a public token and refreshes expiry status.
    * @param {string} token
    */
-  resolvePublicToken(token) {
-    const link = this.findByToken(token);
+  async resolvePublicToken(token) {
+    const link = await this.findByToken(token);
     if (!link) return { ok: false, code: 'NOT_FOUND', link: null };
 
     if (link.status === 'REVOKED') {
@@ -112,7 +112,7 @@ export class PaymentLinkRepository {
     }
     if (link.status === 'EXPIRED' || (link.expiresAt && link.expiresAt.getTime() <= Date.now())) {
       if (link.status !== 'EXPIRED') {
-        this.updateStatus(link.id, 'EXPIRED');
+        await this.updateStatus(link.id, 'EXPIRED');
         link.status = 'EXPIRED';
       }
       return { ok: false, code: 'EXPIRED', link };
@@ -123,46 +123,46 @@ export class PaymentLinkRepository {
     return { ok: true, code: 'OK', link };
   }
 
-  attachPaymentSession(linkId, paymentSessionId) {
+  async attachPaymentSession(linkId, paymentSessionId) {
     const now = new Date().toISOString();
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_links
       SET payment_session_id = ?, status = CASE WHEN status = 'ACTIVE' THEN 'USED' ELSE status END,
           updated_at = ?
       WHERE id = ?
     `, [paymentSessionId, now, linkId]);
-    return this.findById(linkId);
+    return await this.findById(linkId);
   }
 
-  markPaid(linkId) {
+  async markPaid(linkId) {
     const now = new Date().toISOString();
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_links
       SET status = 'PAID', paid_at = ?, updated_at = ?
       WHERE id = ?
     `, [now, now, linkId]);
-    return this.findById(linkId);
+    return await this.findById(linkId);
   }
 
-  revoke(linkId, actorId = 'admin') {
-    const link = this.findById(linkId);
+  async revoke(linkId, actorId = 'admin') {
+    const link = await this.findById(linkId);
     if (!link) return null;
     if (TERMINAL_LINK_STATUSES.has(link.status) && link.status !== 'EXPIRED') {
       throw new Error(`Cannot revoke a link in status ${link.status}`);
     }
     const now = new Date().toISOString();
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_links
       SET status = 'REVOKED', revoked_at = ?, revoked_by = ?, updated_at = ?
       WHERE id = ?
     `, [now, actorId, now, linkId]);
-    return this.findById(linkId);
+    return await this.findById(linkId);
   }
 
-  updateStatus(linkId, status) {
+  async updateStatus(linkId, status) {
     const now = new Date().toISOString();
-    this.db.execute(`UPDATE payment_links SET status = ?, updated_at = ? WHERE id = ?`, [status, now, linkId]);
-    return this.findById(linkId);
+    await this.db.execute(`UPDATE payment_links SET status = ?, updated_at = ? WHERE id = ?`, [status, now, linkId]);
+    return await this.findById(linkId);
   }
 
   mapRow(row) {

@@ -3,10 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { HelpServer } from './server.js';
 import { getDatabase, runMigrations } from '@youpi/db';
 
-export function startHelpServer(port = null, options = {}) {
+export async function startHelpServer(port = null, options = {}) {
   const finalPort = port || Number(process.env.HELP_PORTAL_PORT || 3000);
   const db = options.db || getDatabase();
-  runMigrations(db);
+  await runMigrations(db);
 
   const helpServer = new HelpServer({ db, ...options });
   const rawServer = helpServer.createServer();

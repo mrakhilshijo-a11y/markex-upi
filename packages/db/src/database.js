@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { runMigrations } from './migrate.js';
+import { PostgresDatabase, shouldUsePostgres } from './postgres-database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,15 +13,19 @@ const repoRoot = path.resolve(__dirname, '../../..');
  * Checks if core tables exist and executes migrations if not yet initialized.
  * @param {Database} db
  */
-export function ensureDatabaseInitialized(db) {
+export async function ensureDatabaseInitialized(db) {
+  if (db.driver === 'postgres') {
+    return null;
+  }
   try {
-    const row = db.queryOne("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='merchants'");
+    const row = await db.queryOne("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name='merchants'");
     if (!row || Number(row.count) === 0) {
-      return runMigrations(db);
+      return await runMigrations(db);
     }
   } catch {
-    return runMigrations(db);
+    return await runMigrations(db);
   }
+  return null;
 }
 
 export class DatabaseBusyError extends Error {
@@ -46,15 +51,16 @@ export function isRetryableSqliteError(err) {
 }
 
 /**
- * Universal Database Client for YOUPI PG.
- * Uses native node:sqlite for high-performance, embedded zero-dependency local operation
- * with full transactional ACID guarantees.
+ * Universal Database Client for YOUPI PG (SQLite).
+ * Methods are async so callers share one await-based API with PostgresDatabase.
  */
 export class Database {
   /**
    * @param {{ dbPath?: string, inMemory?: boolean, autoMigrate?: boolean }} [options={}]
    */
   constructor(options = {}) {
+    this.driver = 'sqlite';
+    this._ready = null;
     if (options.inMemory) {
       this.db = new DatabaseSync(':memory:');
     } else {
@@ -77,88 +83,64 @@ export class Database {
       this.db = new DatabaseSync(dbPath);
     }
 
-    // Enable foreign keys, busy timeout, and WAL mode for maximum concurrency and integrity
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
     try {
       this.db.exec('PRAGMA journal_mode = WAL;');
     } catch {}
 
-    // Auto-initialize SQLite on first boot if core tables do not exist
     if (!options.inMemory && options.autoMigrate !== false) {
-      ensureDatabaseInitialized(this);
+      this._ready = ensureDatabaseInitialized(this);
     }
   }
 
-  /**
-   * Normalizes parameter markers from PostgreSQL style ($1, $2) to SQLite style (?, ?).
-   * @param {string} sql
-   * @returns {string}
-   */
+  async ready() {
+    if (this._ready) await this._ready;
+  }
+
   normalizeSql(sql) {
     return sql.replace(/\$\d+/g, '?');
   }
 
-  /**
-   * Executes a statement (INSERT, UPDATE, DELETE, DDL).
-   * @param {string} sql
-   * @param {any[]} [params=[]]
-   * @returns {{ changes: number, lastInsertRowid: number | bigint }}
-   */
-  execute(sql, params = []) {
+  async execute(sql, params = []) {
+    await this.ready();
     const normalized = this.normalizeSql(sql);
     const stmt = this.db.prepare(normalized);
     return stmt.run(...params);
   }
 
-  run(sql, params = []) {
+  async run(sql, params = []) {
     return this.execute(sql, params);
   }
 
-  /**
-   * Queries multiple rows.
-   * @param {string} sql
-   * @param {any[]} [params=[]]
-   * @returns {any[]}
-   */
-  query(sql, params = []) {
+  async query(sql, params = []) {
+    await this.ready();
     const normalized = this.normalizeSql(sql);
     const stmt = this.db.prepare(normalized);
     return stmt.all(...params);
   }
 
-  /**
-   * Queries a single row.
-   * @param {string} sql
-   * @param {any[]} [params=[]]
-   * @returns {any | null}
-   */
-  queryOne(sql, params = []) {
+  async queryOne(sql, params = []) {
+    await this.ready();
     const normalized = this.normalizeSql(sql);
     const stmt = this.db.prepare(normalized);
     const res = stmt.get(...params);
     return res !== undefined ? res : null;
   }
 
-  /**
-   * Executes a batch of DDL or SQL statements.
-   * @param {string} sql
-   */
-  exec(sql) {
+  async exec(sql) {
+    await this.ready();
     this.db.exec(sql);
   }
 
-
   /**
-   * Executes a callback within an ACID database transaction.
-   * Automatically rolls back on exception.
-   * Defaults to BEGIN IMMEDIATE to acquire write intent upfront and avoid lock upgrade deadlocks.
    * @template T
-   * @param {() => T} callback
+   * @param {() => Promise<T>|T} callback
    * @param {{ mode?: 'DEFERRED' | 'IMMEDIATE' | 'EXCLUSIVE' }} [options={}]
-   * @returns {T}
+   * @returns {Promise<T>}
    */
-  transaction(callback, options = {}) {
+  async transaction(callback, options = {}) {
+    await this.ready();
     const mode = options.mode || 'IMMEDIATE';
     const isNested = (this._transactionDepth || 0) > 0;
     const nextDepth = (this._transactionDepth || 0) + 1;
@@ -169,11 +151,10 @@ export class Database {
     } else {
       this.db.exec(`BEGIN ${mode} TRANSACTION;`);
     }
-    // A rejected BEGIN or SAVEPOINT must not leave a phantom nested transaction.
     this._transactionDepth = nextDepth;
 
     try {
-      const result = callback();
+      const result = await callback();
       if (isNested) {
         this.db.exec(`RELEASE SAVEPOINT ${savepointName};`);
       } else {
@@ -187,9 +168,7 @@ export class Database {
         } else {
           this.db.exec('ROLLBACK;');
         }
-      } catch {
-        // Ignore rollback error if already rolled back
-      }
+      } catch {}
       throw err;
     } finally {
       this._transactionDepth--;
@@ -197,18 +176,17 @@ export class Database {
   }
 
   /**
-   * Executes a database operation with bounded retries and exponential backoff on retryable lock contention.
    * @template T
-   * @param {() => T} operation
+   * @param {() => Promise<T>|T} operation
    * @param {number} [maxRetries=3]
    * @param {number} [baseDelayMs=50]
-   * @returns {T}
+   * @returns {Promise<T>}
    */
-  withRetry(operation, maxRetries = 3, baseDelayMs = 50) {
+  async withRetry(operation, maxRetries = 3, baseDelayMs = 50) {
     let attempt = 0;
     while (true) {
       try {
-        return operation();
+        return await operation();
       } catch (err) {
         attempt++;
         if (attempt > maxRetries || !isRetryableSqliteError(err)) {
@@ -218,16 +196,12 @@ export class Database {
           throw err;
         }
         const delay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), 500) + Math.floor(Math.random() * 20);
-        const end = Date.now() + delay;
-        while (Date.now() < end) {}
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }
 
-  /**
-   * Closes the database connection.
-   */
-  close() {
+  async close() {
     this.db.close();
   }
 }
@@ -235,14 +209,37 @@ export class Database {
 let defaultDbInstance = null;
 
 /**
- * Returns the singleton database instance.
- * @param {{ dbPath?: string, inMemory?: boolean }} [options={}]
- * @returns {Database}
+ * Returns the singleton database instance (Postgres or SQLite).
+ * @param {{ dbPath?: string, inMemory?: boolean, connectionString?: string }} [options={}]
+ * @returns {Database|PostgresDatabase}
  */
 export function getDatabase(options = {}) {
   if (!defaultDbInstance) {
-    defaultDbInstance = new Database(options);
-    ensureDatabaseInitialized(defaultDbInstance);
+    if (shouldUsePostgres() || options.connectionString) {
+      defaultDbInstance = new PostgresDatabase({
+        connectionString: options.connectionString || process.env.DATABASE_URL,
+      });
+    } else {
+      defaultDbInstance = new Database(options);
+      // Fire-and-forget init; callers should await methods which wait on ready()
+      ensureDatabaseInitialized(defaultDbInstance).catch((err) => {
+        console.error('[db] SQLite init failed:', err?.message || err);
+      });
+    }
   }
   return defaultDbInstance;
 }
+
+/**
+ * Reset singleton (tests only).
+ */
+export async function resetDatabaseSingleton() {
+  if (defaultDbInstance?.close) {
+    try {
+      await defaultDbInstance.close();
+    } catch {}
+  }
+  defaultDbInstance = null;
+}
+
+export { PostgresDatabase, shouldUsePostgres } from './postgres-database.js';

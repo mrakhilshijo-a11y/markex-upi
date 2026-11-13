@@ -13,18 +13,18 @@ export class ReceivingAccountRepository {
    * If isActive is true, atomically deactivates any other active accounts for this merchant.
    * Enforces that maximum ONE VPA may be active per merchant.
    */
-  create(data) {
+  async create(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const isActive = data.isActive !== undefined ? Boolean(data.isActive) : true;
     const isMerchantEnabled = data.isMerchantEnabled !== undefined ? Boolean(data.isMerchantEnabled) : true;
 
-    return this.db.transaction(() => {
+    return await this.db.transaction(async () => {
       // If this new account is marked active, atomically deactivate all existing active accounts for this merchant
       if (isActive) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
-          SET is_active = 0, updated_at = ?
+          SET is_active = false, updated_at = ?
           WHERE merchant_id = ?
         `, [now, data.merchantId]);
       }
@@ -37,40 +37,40 @@ export class ReceivingAccountRepository {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
-      this.db.execute(sql, [
+      await this.db.execute(sql, [
         id,
         data.merchantId,
         data.upiId.trim(),
         data.payeeName.trim(),
-        isMerchantEnabled ? 1 : 0,
-        isActive ? 1 : 0,
-        0,
+        isMerchantEnabled,
+        isActive,
+        false,
         null,
         now,
         now
       ]);
 
-      return this.findById(id);
+      return await this.findById(id);
     });
   }
 
-  findById(id) {
-    const row = this.db.queryOne('SELECT * FROM payment_receiving_accounts WHERE id = ?', [id]);
+  async findById(id) {
+    const row = await this.db.queryOne('SELECT * FROM payment_receiving_accounts WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapRow(row);
   }
 
-  findByMerchantId(merchantId) {
-    const rows = this.db.query(
+  async findByMerchantId(merchantId) {
+    const rows = await this.db.query(
       'SELECT * FROM payment_receiving_accounts WHERE merchant_id = ? ORDER BY is_active DESC, created_at ASC',
       [merchantId]
     );
     return rows.map(r => this.mapRow(r));
   }
 
-  findActiveForMerchant(merchantId) {
-    const row = this.db.queryOne(
-      'SELECT * FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = 1 LIMIT 1',
+  async findActiveForMerchant(merchantId) {
+    const row = await this.db.queryOne(
+      'SELECT * FROM payment_receiving_accounts WHERE merchant_id = ? AND is_active = true LIMIT 1',
       [merchantId]
     );
     if (!row) return null;
@@ -81,48 +81,48 @@ export class ReceivingAccountRepository {
    * Atomically activates an account and deactivates all other accounts for this merchant.
    * Backend invariant: At most ONE VPA active per merchant.
    */
-  activateAccount(merchantId, accountId) {
-    return this.db.transaction(() => {
+  async activateAccount(merchantId, accountId) {
+    return await this.db.transaction(async () => {
       const now = new Date().toISOString();
 
       // Deactivate all existing accounts for this merchant
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_receiving_accounts
-        SET is_active = 0, updated_at = ?
+        SET is_active = false, updated_at = ?
         WHERE merchant_id = ?
       `, [now, merchantId]);
 
       // Activate the targeted account
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_receiving_accounts
-        SET is_active = 1, updated_at = ?
+        SET is_active = true, updated_at = ?
         WHERE id = ? AND merchant_id = ?
       `, [now, accountId, merchantId]);
 
-      return this.findById(accountId);
+      return await this.findById(accountId);
     });
   }
 
   /**
    * Deactivates a specific account.
    */
-  deactivateAccount(merchantId, accountId) {
+  async deactivateAccount(merchantId, accountId) {
     const now = new Date().toISOString();
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_receiving_accounts
-      SET is_active = 0, updated_at = ?
+      SET is_active = false, updated_at = ?
       WHERE id = ? AND merchant_id = ?
     `, [now, accountId, merchantId]);
 
-    return this.findById(accountId);
+    return await this.findById(accountId);
   }
 
   /**
    * Updates an existing account's details.
    */
-  updateAccount(id, data) {
-    return this.db.transaction(() => {
-      const existing = this.findById(id);
+  async updateAccount(id, data) {
+    return await this.db.transaction(async () => {
+      const existing = await this.findById(id);
       if (!existing) return null;
 
       const now = new Date().toISOString();
@@ -136,32 +136,32 @@ export class ReceivingAccountRepository {
       const isMerchantEnabled = data.isMerchantEnabled !== undefined ? Boolean(data.isMerchantEnabled) : existing.isMerchantEnabled;
 
       if (data.isActive === true) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
-          SET is_active = 0, updated_at = ?
+          SET is_active = false, updated_at = ?
           WHERE merchant_id = ?
         `, [now, existing.merchantId]);
 
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
-          SET upi_id = ?, payee_name = ?, is_merchant_enabled = ?, is_active = 1, updated_at = ?
+          SET upi_id = ?, payee_name = ?, is_merchant_enabled = ?, is_active = true, updated_at = ?
           WHERE id = ?
         `, [upiId, payeeName, isMerchantEnabled ? 1 : 0, now, id]);
       } else if (data.isActive === false) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
-          SET upi_id = ?, payee_name = ?, is_merchant_enabled = ?, is_active = 0, updated_at = ?
+          SET upi_id = ?, payee_name = ?, is_merchant_enabled = ?, is_active = false, updated_at = ?
           WHERE id = ?
         `, [upiId, payeeName, isMerchantEnabled ? 1 : 0, now, id]);
       } else {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
           SET upi_id = ?, payee_name = ?, is_merchant_enabled = ?, updated_at = ?
           WHERE id = ?
         `, [upiId, payeeName, isMerchantEnabled ? 1 : 0, now, id]);
       }
 
-      return this.findById(id);
+      return await this.findById(id);
     });
   }
 
@@ -169,8 +169,8 @@ export class ReceivingAccountRepository {
    * Deletes a receiving account.
    * Throws if the slot is currently busy.
    */
-  deleteAccount(merchantId, accountId) {
-    const account = this.findById(accountId);
+  async deleteAccount(merchantId, accountId) {
+    const account = await this.findById(accountId);
     if (!account || account.merchantId !== merchantId) {
       throw new Error(`Account not found or does not belong to merchant: ${accountId}`);
     }
@@ -179,22 +179,22 @@ export class ReceivingAccountRepository {
       throw new Error(`Cannot delete account ${account.upiId} because it has an active checkout session.`);
     }
 
-    this.db.execute('DELETE FROM payment_receiving_accounts WHERE id = ? AND merchant_id = ?', [accountId, merchantId]);
+    await this.db.execute('DELETE FROM payment_receiving_accounts WHERE id = ? AND merchant_id = ?', [accountId, merchantId]);
     return true;
   }
 
   /**
    * Sets slot busy status and currently active session ID.
    */
-  setSlotStatus(id, isBusy, activeSessionId = null) {
+  async setSlotStatus(id, isBusy, activeSessionId = null) {
     const now = new Date().toISOString();
-    this.db.execute(`
+    await this.db.execute(`
       UPDATE payment_receiving_accounts
       SET is_slot_busy = ?, current_active_session_id = ?, updated_at = ?
       WHERE id = ?
     `, [isBusy ? 1 : 0, activeSessionId, now, id]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
   /**
@@ -204,20 +204,20 @@ export class ReceivingAccountRepository {
    * @param {string} [payeeName]
    * @param {boolean} [isMerchantEnabled=true]
    */
-  upsertActiveForMerchant(merchantId, upiId, payeeName = null, isMerchantEnabled = true) {
+  async upsertActiveForMerchant(merchantId, upiId, payeeName = null, isMerchantEnabled = true) {
     const cleanUpi = upiId.trim();
-    const existing = this.findActiveForMerchant(merchantId);
+    const existing = await this.findActiveForMerchant(merchantId);
     const now = new Date().toISOString();
 
     if (existing) {
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_receiving_accounts
         SET upi_id = ?, payee_name = COALESCE(?, payee_name), is_merchant_enabled = ?, updated_at = ?
         WHERE id = ?
       `, [cleanUpi, payeeName?.trim() || null, isMerchantEnabled ? 1 : 0, now, existing.id]);
-      return this.findById(existing.id);
+      return await this.findById(existing.id);
     } else {
-      return this.create({
+      return await this.create({
         merchantId,
         upiId: cleanUpi,
         payeeName: payeeName?.trim() || 'Merchant Store',

@@ -1,0 +1,54 @@
+# Copy these into Netlify → Site configuration → Environment variables
+# Do NOT commit real secrets. Replace ALL placeholder values.
+# Site URL (change if Netlify assigns a different subdomain):
+
+NODE_ENV=production
+YOUPI_MODE=production
+NODE_VERSION=24
+
+# Public URLs — same Netlify origin
+BASE_PAYMENT_API_URL=https://markex-youpi-pg.netlify.app
+BASE_CHECKOUT_URL=https://markex-youpi-pg.netlify.app
+BASE_ADMIN_URL=https://markex-youpi-pg.netlify.app
+BASE_DEMO_STORE_URL=https://markex-youpi-pg.netlify.app
+CHECKOUT_PUBLIC_URL=https://markex-youpi-pg.netlify.app
+COIN_STORE_PUBLIC_URL=https://markex-youpi-pg.netlify.app
+YOUPI_ALLOWED_ORIGINS=https://markex-youpi-pg.netlify.app
+YOUPI_ALLOWED_RETURN_ORIGINS=https://markex-youpi-pg.netlify.app
+CHECKOUT_FRAME_ANCESTORS=https://markex-youpi-pg.netlify.app
+
+# MARKEX
+MERCHANT_NAME=MARKEX TRADING ACADEMY
+DEFAULT_MERCHANT_NAME=MARKEX TRADING ACADEMY
+DEFAULT_MERCHANT_SLUG=markex-academy
+DEFAULT_APP_NAME=MARKEX
+DEFAULT_PRIMARY_COLOR=#0B3D2E
+DEFAULT_HIDE_POWERED_BY=true
+DEFAULT_SUPPORT_EMAIL=YOUR_SUPPORT_EMAIL
+DEFAULT_SUPPORT_PHONE=YOUR_SUPPORT_PHONE
+MERCHANT_UPI_ID=YOUR_UPI_ID
+MERCHANT_BANK_ACCOUNT=YOUR_BANK_ACCOUNT_NUMBER
+MERCHANT_IFSC=YOUR_IFSC_CODE
+MERCHANT_BANK_NAME=Federal Bank
+MARKEX_SHOW_BANK_TRANSFER=true
+PAYMENT_PROVIDER=direct_upi
+PAYMENT_VERIFICATION_MODE=manual
+CHECKOUT_GUEST_MODE=true
+PAYMENT_LINK_DEFAULT_EXPIRY_HOURS=72
+
+# Secrets — generate fresh for production (do not reuse chat/pasted tokens)
+ADMIN_API_TOKEN=GENERATE_64_HEX
+JWT_SECRET=GENERATE_64_HEX
+ENCRYPTION_MASTER_KEY=GENERATE_64_HEX
+
+# Persistence (required on Netlify — SQLite will not survive)
+# Prefer values from `neon env pull` / `.env.local` (pooled + unpooled)
+DATABASE_URL=postgresql://USER:PASSWORD@HOST-pooler/DBNAME?sslmode=require
+DATABASE_URL_UNPOOLED=postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
+NEON_BRANCH=production
+NEON_BRANCH_ID=br-...
+USE_SQLITE_FALLBACK=false
+
+# Do NOT set on Netlify:
+# YOUPI_ALLOW_LOCALHOST_MODE=true
+# YOUPI_MODE=localhost

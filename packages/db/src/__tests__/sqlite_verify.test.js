@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 
-test('native node:sqlite operates in memory', () => {
+test('native node:sqlite operates in memory', async () => {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE test (id TEXT PRIMARY KEY, val INT);');
   const insert = db.prepare('INSERT INTO test (id, val) VALUES (?, ?)');

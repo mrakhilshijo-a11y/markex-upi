@@ -1,0 +1,24 @@
+# MARKEX / YOUPI PG — Netlify Server (Early Access)
+# Requires Node 24+ and Netlify Server EA enabled on the site.
+
+[build]
+  command = "npm install"
+  publish = "netlify/public"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "24"
+  NODE_ENV = "production"
+
+[server]
+  region = "us-east-1"
+  size = "medium"
+
+# Single-origin: Netlify Server handles dynamic routes.
+# Static publish dir is a minimal fallback landing.
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

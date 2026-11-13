@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateQrSvg, generateStandSvg, generateStandHtml, formatIndianMobile } from '@youpi/core';
-import { getInternalServiceToken, buildStandUpiUri, toPaise } from '@youpi/common';
+import { getInternalServiceToken, buildStandUpiUri, toPaise, loadRootEnv } from '@youpi/common';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -148,15 +148,7 @@ function sanitizedForwardHeaders(req, targetHost) {
   return headers;
 }
 
-// In production, reliably ensure environment variables from .env are loaded if not already provided
-if (!process.env.BASE_PAYMENT_API_URL && typeof process.loadEnvFile === 'function') {
-  try {
-    const rootEnv = path.resolve(__dirname, '../../../.env');
-    if (fs.existsSync(rootEnv)) {
-      process.loadEnvFile(rootEnv);
-    }
-  } catch {}
-}
+loadRootEnv(path.resolve(__dirname, '../../..'));
 
 export class CheckoutServer {
   /**

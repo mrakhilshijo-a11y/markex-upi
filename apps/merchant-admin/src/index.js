@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { AdminServer } from './server.js';
 import { getDatabase, runMigrations, ensureDatabaseInitialized } from '@youpi/db';
 
-export function startAdminServer(port = null, options = {}) {
+export async function startAdminServer(port = null, options = {}) {
   const finalPort = port || Number(process.env.MERCHANT_ADMIN_PORT || 6001);
   const db = options.db || getDatabase();
-  ensureDatabaseInitialized(db);
-  runMigrations(db);
+  await ensureDatabaseInitialized(db);
+  await runMigrations(db);
 
   const adminServer = new AdminServer({ db, ...options });
   const rawServer = adminServer.createServer();

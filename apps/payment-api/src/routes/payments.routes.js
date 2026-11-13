@@ -55,9 +55,9 @@ export function registerPaymentRoutes(server, ctx) {
     ]);
     let merchant = null;
     if (rawMerchantId && !docPlaceholders.has(rawMerchantId.toUpperCase())) {
-      merchant = ctx.merchantRepo.findById(rawMerchantId);
+      merchant = await ctx.merchantRepo.findById(rawMerchantId);
       if (!merchant && typeof ctx.merchantRepo.findBySlug === 'function') {
-        merchant = ctx.merchantRepo.findBySlug(rawMerchantId);
+        merchant = await ctx.merchantRepo.findBySlug(rawMerchantId);
       }
     } else {
       HttpServer.json(res, 400, { error: 'X-Merchant-Id is required.' });
@@ -173,7 +173,7 @@ export function registerPaymentRoutes(server, ctx) {
       HttpServer.json(res, 400, { error: 'Unsupported payment method.' });
       return;
     }
-    const existing = ctx.sessionRepo.findByOrderId(merchant.id, body.orderId);
+    const existing = await ctx.sessionRepo.findByOrderId(merchant.id, body.orderId);
     if (existing) {
       if (existing.method !== requestedMethod) {
         HttpServer.json(res, 409, { error: 'ORDER_PAYMENT_METHOD_MISMATCH', code: 'ORDER_PAYMENT_METHOD_MISMATCH' });
@@ -212,9 +212,9 @@ export function registerPaymentRoutes(server, ctx) {
         (existing.status === PaymentStatus.PROCESSING && existing.processingExpiresAt && existing.processingExpiresAt.getTime() <= now);
       if (isStale) {
         const terminalStatus = existing.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-        ctx.sessionRepo.transitionToTerminal(existing.id, terminalStatus);
+        await ctx.sessionRepo.transitionToTerminal(existing.id, terminalStatus);
         if (existing.receivingAccountId) {
-          ctx.queueEngine.promoteNext(existing.receivingAccountId);
+          await ctx.queueEngine.promoteNext(existing.receivingAccountId);
         }
         existing.status = terminalStatus;
         if (ctx.eventEmitter) {
@@ -287,7 +287,7 @@ export function registerPaymentRoutes(server, ctx) {
     let receivingAccountSnapshot = null;
     if (!isCounterPayment) {
       // Resolve active receiving account for UPI
-      const receivingAccount = ctx.accountRepo.findActiveForMerchant(merchant.id);
+      const receivingAccount = await ctx.accountRepo.findActiveForMerchant(merchant.id);
       if (!receivingAccount) {
         HttpServer.json(res, 500, { error: 'No active UPI receiving account configured for merchant.' });
         return;
@@ -305,14 +305,14 @@ export function registerPaymentRoutes(server, ctx) {
     let customerId = body.customerId || null;
     if (!customerId && (body.customer?.mobileNumber || body.customer?.phoneNumber || body.customer?.email) && ctx.customerRepo) {
       const ident = body.customer.email || body.customer.mobileNumber || body.customer.phoneNumber;
-      const existingCust = ctx.customerRepo.findByIdentifier(ident);
+      const existingCust = await ctx.customerRepo.findByIdentifier(ident);
       if (existingCust) {
         customerId = existingCust.id;
       }
     }
 
     // Server-side Ban Enforcement (Section 3)
-    if (customerId && ctx.customerRepo && ctx.customerRepo.isBanned(customerId)) {
+    if (customerId && ctx.customerRepo && await ctx.customerRepo.isBanned(customerId)) {
       HttpServer.json(res, 403, {
         status: 'BLOCKED',
         error: 'ACCESS BLOCKED: Your account has been temporarily blocked because suspicious payment activity was detected. Our team will review the activity before access can be restored.',
@@ -324,7 +324,7 @@ export function registerPaymentRoutes(server, ctx) {
 
     // Check if customer already has an active payment session on another device (CASE 3)
     if (customerId && ctx.sessionRepo) {
-      const activeForCust = ctx.sessionRepo.findActiveForCustomer ? ctx.sessionRepo.findActiveForCustomer(customerId) : null;
+      const activeForCust = ctx.sessionRepo.findActiveForCustomer ? await ctx.sessionRepo.findActiveForCustomer(customerId) : null;
       if (activeForCust) {
         if (activeForCust.deviceId && (!deviceId || deviceId !== activeForCust.deviceId)) {
           HttpServer.json(res, 409, {
@@ -358,11 +358,11 @@ export function registerPaymentRoutes(server, ctx) {
     };
 
     if (deviceId && customerId && ctx.deviceRepo) {
-      try { ctx.deviceRepo.associateCustomer(deviceId, customerId); } catch {}
+      try { await ctx.deviceRepo.associateCustomer(deviceId, customerId); } catch {}
     }
 
     // Create session in DB
-    const session = ctx.sessionRepo.create({
+    const session = await ctx.sessionRepo.create({
       merchantId: merchant.id,
       customerId,
       receivingAccountId,
@@ -381,11 +381,11 @@ export function registerPaymentRoutes(server, ctx) {
     let queueResult = { status: initialStatus, queuePosition: 0, expiresAt: null };
     if (!isCounterPayment && receivingAccountId && shouldActivateNow) {
       const activeDurationMs = ctx.timingEngine ? ctx.timingEngine.activeDurationMs : 300000;
-      queueResult = ctx.queueEngine.enqueueOrActivate(session.id, receivingAccountId, activeDurationMs);
+      queueResult = await ctx.queueEngine.enqueueOrActivate(session.id, receivingAccountId, activeDurationMs);
 
       // If activated immediately, start Timer 1 (5 minutes)
       if (queueResult.expiresAt) {
-        ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
+        await ctx.timingEngine.startActiveTimer(session.id, queueResult.expiresAt);
       }
       server.broadcastSse('admin_counter_events', 'status_change', {
         status: queueResult.status,
@@ -409,7 +409,7 @@ export function registerPaymentRoutes(server, ctx) {
 
   // GET /api/v1/payments/:id
   server.get('/api/v1/payments/:id', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -451,7 +451,7 @@ export function registerPaymentRoutes(server, ctx) {
 
   // GET /api/v1/payments/:id/cod (Developer COD Info Endpoint)
   server.get('/api/v1/payments/:id/cod', async (req, res, params) => {
-    const session = ctx.sessionRepo.findById(params.id);
+    const session = await ctx.sessionRepo.findById(params.id);
     if (!session) {
       HttpServer.json(res, 404, { error: `Payment session not found: ${params.id}` });
       return;
@@ -462,7 +462,7 @@ export function registerPaymentRoutes(server, ctx) {
     const owner = isPaymentOwner(req, session, ctx);
     let customer = null;
     if (owner && session.customerId && ctx.customerRepo) {
-      const c = ctx.customerRepo.findById(session.customerId);
+      const c = await ctx.customerRepo.findById(session.customerId);
       if (c) {
         const isOwner = isPaymentOwner(req, session, ctx);
         customer = {
@@ -495,9 +495,9 @@ export function registerPaymentRoutes(server, ctx) {
     const merchantId = req.headers['x-merchant-id'] || req.query.merchantId;
     let merchant;
     if (merchantId) {
-      merchant = ctx.merchantRepo.findById(merchantId);
+      merchant = await ctx.merchantRepo.findById(merchantId);
     } else {
-      merchant = ctx.merchantRepo.getDefault ? ctx.merchantRepo.getDefault() : (ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || ctx.merchantRepo.findAll()[0]);
+      merchant = ctx.merchantRepo.getDefault ? await ctx.merchantRepo.getDefault() : (await ctx.merchantRepo.findById('00000000-0000-0000-0000-000000000001') || await ctx.merchantRepo.findAll()[0]);
     }
 
     if (!merchant) {
@@ -505,7 +505,7 @@ export function registerPaymentRoutes(server, ctx) {
       return;
     }
 
-    const session = ctx.sessionRepo.findByOrderId(merchant.id, params.orderId);
+    const session = await ctx.sessionRepo.findByOrderId(merchant.id, params.orderId);
     if (!session) {
       HttpServer.json(res, 404, { error: `Order not found: ${params.orderId}` });
       return;
@@ -516,7 +516,7 @@ export function registerPaymentRoutes(server, ctx) {
     const owner = isPaymentOwner(req, session, ctx);
     let customer = null;
     if (owner && session.customerId && ctx.customerRepo) {
-      const c = ctx.customerRepo.findById(session.customerId);
+      const c = await ctx.customerRepo.findById(session.customerId);
       if (c) {
         const isOwner = isPaymentOwner(req, session, ctx);
         customer = {

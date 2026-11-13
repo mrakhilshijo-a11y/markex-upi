@@ -49,7 +49,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
 
   before(async () => {
     db = new Database({ inMemory: true });
-    runMigrations(db);
+    await runMigrations(db);
 
     merchantRepo = new MerchantRepository(db);
     accountRepo = new ReceivingAccountRepository(db);
@@ -57,7 +57,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     deviceRepo = new DeviceRepository(db);
 
     // Merchant A: V-Visa Staging
-    merchantA = merchantRepo.create({
+    merchantA = await merchantRepo.create({
       businessName: 'V-Visa B2B Staging',
       slug: 'vvisa-b2b',
       contactEmail: 'ops@vvisa.in',
@@ -67,7 +67,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     });
 
     // Merchant B: Unrelated External Agency
-    merchantB = merchantRepo.create({
+    merchantB = await merchantRepo.create({
       businessName: 'External Merchant Ltd',
       slug: 'external-merchant',
       contactEmail: 'admin@external.in',
@@ -77,7 +77,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     });
 
     // Account A for Merchant A
-    accountA = accountRepo.create({
+    accountA = await accountRepo.create({
       merchantId: merchantA.id,
       upiId: 'vvisab2b@icici',
       payeeName: 'V-Visa B2B Tech',
@@ -86,7 +86,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     });
 
     // Account B for Merchant B
-    accountB = accountRepo.create({
+    accountB = await accountRepo.create({
       merchantId: merchantB.id,
       upiId: 'external@hdfcbank',
       payeeName: 'External Merchant Co',
@@ -108,7 +108,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
 
   after(async () => {
     await apiInstance.close();
-    db.close();
+    await db.close();
   });
 
   // --------------------------------------------------------------------------
@@ -151,7 +151,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
 
   test('Fix 1.6: Observer query returns ONLY sessions scoped to the authorized receiving account', async () => {
     // Create an active session for accountA
-    const sessionA = sessionRepo.create({
+    const sessionA = await sessionRepo.create({
       merchantId: merchantA.id,
       receivingAccountId: accountA.id,
       amountPaise: 50000,
@@ -161,7 +161,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     });
 
     // Create an active session for accountB
-    const sessionB = sessionRepo.create({
+    const sessionB = await sessionRepo.create({
       merchantId: merchantB.id,
       receivingAccountId: accountB.id,
       amountPaise: 90000,
@@ -253,11 +253,11 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
   // --------------------------------------------------------------------------
   // Fix 3: Single-Active-Session DB Invariant (idx_single_active_session)
   // --------------------------------------------------------------------------
-  test('Fix 3.1: Database unique index idx_single_active_session rejects 2nd ACTIVE session on same account', () => {
+  test('Fix 3.1: Database unique index idx_single_active_session rejects 2nd ACTIVE session on same account', async () => {
     // Clean up any sessions left by prior tests on this account
     db.run(`DELETE FROM payment_sessions WHERE receiving_account_id = ?`, [accountA.id]);
 
-    const active1 = sessionRepo.create({
+    const active1 = await sessionRepo.create({
       merchantId: merchantA.id,
       receivingAccountId: accountA.id,
       amountPaise: 10000,
@@ -288,12 +288,12 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     db.run('DELETE FROM payment_sessions WHERE id = ?', [active1.id]);
   });
 
-  test('Fix 3.2: Concurrent ACTIVE sessions on DIFFERENT receiving accounts are permitted', () => {
+  test('Fix 3.2: Concurrent ACTIVE sessions on DIFFERENT receiving accounts are permitted', async () => {
     // Clean up any sessions left by prior tests on this account
     db.run(`DELETE FROM payment_sessions WHERE receiving_account_id = ?`, [accountA.id]);
     db.run(`DELETE FROM payment_sessions WHERE receiving_account_id = ?`, [accountB.id]);
 
-    const activeA = sessionRepo.create({
+    const activeA = await sessionRepo.create({
       merchantId: merchantA.id,
       receivingAccountId: accountA.id,
       amountPaise: 15000,
@@ -302,7 +302,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
       expiresAt: new Date(Date.now() + 300000)
     });
 
-    const activeB = sessionRepo.create({
+    const activeB = await sessionRepo.create({
       merchantId: merchantB.id,
       receivingAccountId: accountB.id,
       amountPaise: 25000,
@@ -315,18 +315,18 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     assert.ok(activeB.id);
 
     // Both are simultaneously ACTIVE
-    assert.equal(sessionRepo.findById(activeA.id).status, PaymentStatus.ACTIVE);
-    assert.equal(sessionRepo.findById(activeB.id).status, PaymentStatus.ACTIVE);
+    assert.equal(await sessionRepo.findById(activeA.id).status, PaymentStatus.ACTIVE);
+    assert.equal(await sessionRepo.findById(activeB.id).status, PaymentStatus.ACTIVE);
 
     // Clean up
     db.run('DELETE FROM payment_sessions WHERE id IN (?, ?)', [activeA.id, activeB.id]);
   });
 
-  test('Fix 3.3: acquireSlotAtomic queues 2nd request gracefully when slot is occupied', () => {
+  test('Fix 3.3: acquireSlotAtomic queues 2nd request gracefully when slot is occupied', async () => {
     // Clean up any sessions left by prior tests on this account
     db.run(`DELETE FROM payment_sessions WHERE receiving_account_id = ?`, [accountA.id]);
 
-    const session1 = sessionRepo.create({
+    const session1 = await sessionRepo.create({
       merchantId: merchantA.id,
       receivingAccountId: accountA.id,
       amountPaise: 12000,
@@ -335,7 +335,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
       expiresAt: new Date(Date.now() + 300000)
     });
 
-    const session2 = sessionRepo.create({
+    const session2 = await sessionRepo.create({
       merchantId: merchantA.id,
       receivingAccountId: accountA.id,
       amountPaise: 14000,
@@ -345,12 +345,12 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     });
 
     // 1st request acquires ACTIVE slot
-    const slot1 = sessionRepo.acquireSlotAtomic(session1.id, accountA.id, 300000);
+    const slot1 = await sessionRepo.acquireSlotAtomic(session1.id, accountA.id, 300000);
     assert.equal(slot1.status, PaymentStatus.ACTIVE);
     assert.equal(slot1.queuePosition, 0);
 
     // 2nd request to same receiving account falls back cleanly to QUEUED
-    const slot2 = sessionRepo.acquireSlotAtomic(session2.id, accountA.id, 300000);
+    const slot2 = await sessionRepo.acquireSlotAtomic(session2.id, accountA.id, 300000);
     assert.equal(slot2.status, PaymentStatus.QUEUED);
     assert.equal(slot2.queuePosition, 1);
 
@@ -361,7 +361,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
   // --------------------------------------------------------------------------
   // Fix 4: Concurrency & Lock Contention Resilience
   // --------------------------------------------------------------------------
-  test('Fix 4.1: Concurrent acquireSlotAtomic race results in 1 ACTIVE and remaining QUEUED with 0 errors', () => {
+  test('Fix 4.1: Concurrent acquireSlotAtomic race results in 1 ACTIVE and remaining QUEUED with 0 errors', async () => {
     // Clean up any sessions left by prior tests on this account
     db.run(`DELETE FROM payment_sessions WHERE receiving_account_id = ?`, [accountA.id]);
 
@@ -369,7 +369,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     const sessionIds = [];
 
     for (let i = 0; i < concurrentCount; i++) {
-      const s = sessionRepo.create({
+      const s = await sessionRepo.create({
         merchantId: merchantA.id,
         receivingAccountId: accountA.id,
         amountPaise: 10000 + (i * 100),
@@ -381,7 +381,7 @@ describe('Phase 9C: Observer Isolation & Concurrency Hardening Suite', () => {
     }
 
     const results = sessionIds.map(sid =>
-      sessionRepo.acquireSlotAtomic(sid, accountA.id, 300000)
+      await sessionRepo.acquireSlotAtomic(sid, accountA.id, 300000)
     );
 
     const activeSessions = results.filter(r => r.status === PaymentStatus.ACTIVE);

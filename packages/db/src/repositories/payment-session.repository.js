@@ -9,7 +9,7 @@ export class PaymentSessionRepository {
     this.db = db;
   }
 
-  create(data) {
+  async create(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const metadata = typeof data.metadata === 'object' ? JSON.stringify(data.metadata) : (data.metadata || '{}');
@@ -24,7 +24,7 @@ export class PaymentSessionRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '[]', 'UNVERIFIED', ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.merchantId,
       data.customerId || null,
@@ -44,37 +44,37 @@ export class PaymentSessionRepository {
       now
     ]);
 
-    return this.findById(id);
+    return await this.findById(id);
   }
 
-  findById(id) {
-    const row = this.db.queryOne('SELECT * FROM payment_sessions WHERE id = ?', [id]);
+  async findById(id) {
+    const row = await this.db.queryOne('SELECT * FROM payment_sessions WHERE id = ?', [id]);
     if (!row) return null;
     return this.mapRow(row);
   }
 
-  findByOrderId(merchantId, orderId) {
+  async findByOrderId(merchantId, orderId) {
     // The schema allows a second row for the same (merchant, order) once the previous one
     // is terminal, so the newest row must win. Without an explicit ordering a stale
     // terminal row could be returned and the caller would miss a SUCCESS session.
-    const row = this.db.queryOne(
-      'SELECT * FROM payment_sessions WHERE merchant_id = ? AND order_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+    const row = await this.db.queryOne(
+      'SELECT * FROM payment_sessions WHERE merchant_id = ? AND order_id = ? ORDER BY created_at DESC LIMIT 1',
       [merchantId, orderId]
     );
     if (!row) return null;
     return this.mapRow(row);
   }
 
-  findByCustomerId(customerId) {
-    const rows = this.db.query(
+  async findByCustomerId(customerId) {
+    const rows = await this.db.query(
       'SELECT * FROM payment_sessions WHERE customer_id = ? ORDER BY created_at DESC',
       [customerId]
     );
     return rows.map(r => this.mapRow(r));
   }
 
-  findByMerchantId(merchantId, limit = 50) {
-    const rows = this.db.query(
+  async findByMerchantId(merchantId, limit = 50) {
+    const rows = await this.db.query(
       'SELECT * FROM payment_sessions WHERE merchant_id = ? ORDER BY created_at DESC LIMIT ?',
       [merchantId, limit]
     );
@@ -87,18 +87,18 @@ export class PaymentSessionRepository {
    * If slot is free, session transitions to ACTIVE with 5:00 window.
    * If slot is occupied, session transitions to QUEUED with sequence position.
    */
-  acquireSlotAtomic(sessionId, receivingAccountId, durationMs = 300000) {
+  async acquireSlotAtomic(sessionId, receivingAccountId, durationMs = 300000) {
     if (!receivingAccountId) {
       throw new Error('receivingAccountId is mandatory for acquiring an active payment slot');
     }
 
-    const runAcquisition = () => {
-      return this.db.transaction(() => {
+    const runAcquisition = async () => {
+      return await this.db.transaction(async () => {
       const now = new Date();
       const nowIso = now.toISOString();
 
       // Check for current active or processing session on this receiving account
-      let activeRow = this.db.queryOne(`
+      let activeRow = await this.db.queryOne(`
         SELECT id, status, expires_at, processing_expires_at
         FROM payment_sessions
         WHERE receiving_account_id = ? AND status IN (?, ?)
@@ -113,7 +113,7 @@ export class PaymentSessionRepository {
           if (!isValidTransition(activeRow.status, terminalStatus)) {
             throw new Error(`Illegal payment state transition: cannot move from '${activeRow.status}' to '${terminalStatus}'.`);
           }
-          this.db.execute(`
+          await this.db.execute(`
             UPDATE payment_sessions
             SET status = ?, completed_at = ?, updated_at = ?
             WHERE id = ?
@@ -137,7 +137,7 @@ export class PaymentSessionRepository {
         // revived to ACTIVE by a concurrent queue tick.
         // Already-ACTIVE sessions (e.g. switching back from BANK_TRANSFER / COD) may
         // re-bind to a vacant UPI receiving account without an ACTIVE→ACTIVE transition.
-        const current = this.findById(sessionId);
+        const current = await this.findById(sessionId);
         const currentStatus = current?.status;
         const alreadyActive = currentStatus === PaymentStatus.ACTIVE;
         if (currentStatus && !alreadyActive && !isValidTransition(currentStatus, PaymentStatus.ACTIVE)) {
@@ -147,14 +147,14 @@ export class PaymentSessionRepository {
         const expiresAt = new Date(now.getTime() + durationMs).toISOString();
 
         try {
-          this.db.execute(`
+          await this.db.execute(`
             UPDATE payment_sessions
             SET status = ?, receiving_account_id = ?, slot_acquired_at = ?, expires_at = ?, queue_position = 0, updated_at = ?
             WHERE id = ?
           `, [PaymentStatus.ACTIVE, receivingAccountId, nowIso, expiresAt, nowIso, sessionId]);
 
           // Mark receiving account as busy
-          this.db.execute(`
+          await this.db.execute(`
             UPDATE payment_receiving_accounts
             SET is_slot_busy = 1, current_active_session_id = ?, updated_at = ?
             WHERE id = ?
@@ -167,7 +167,7 @@ export class PaymentSessionRepository {
           };
         } catch (slotErr) {
           if (slotErr.message && (slotErr.message.includes('idx_one_slot_per_receiving_account') || slotErr.message.includes('idx_single_active_session') || slotErr.message.includes('UNIQUE constraint failed'))) {
-            activeRow = this.db.queryOne(`
+            activeRow = await this.db.queryOne(`
               SELECT id, status, expires_at FROM payment_sessions
               WHERE receiving_account_id = ? AND status IN (?, ?) LIMIT 1
             `, [receivingAccountId, PaymentStatus.ACTIVE, PaymentStatus.PROCESSING]);
@@ -177,10 +177,10 @@ export class PaymentSessionRepository {
         }
       } else {
         // Slot is busy! Place in QUEUED
-        const existingSession = this.findById(sessionId);
+        const existingSession = await this.findById(sessionId);
         let queuePosition = existingSession?.queuePosition;
         if (!queuePosition || queuePosition <= 0) {
-          const posRow = this.db.queryOne(`
+          const posRow = await this.db.queryOne(`
             SELECT COALESCE(MAX(queue_position), 0) + 1 AS next_pos
             FROM payment_sessions
             WHERE receiving_account_id = ? AND status = ?
@@ -193,7 +193,7 @@ export class PaymentSessionRepository {
           throw new Error(`Illegal payment state transition: cannot move from '${existingSession.status}' to 'QUEUED'.`);
         }
 
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_sessions
           SET status = ?, queue_position = ?, updated_at = ?
           WHERE id = ?
@@ -209,7 +209,7 @@ export class PaymentSessionRepository {
   };
 
   return typeof this.db.withRetry === 'function'
-    ? this.db.withRetry(runAcquisition)
+    ? await this.db.withRetry(runAcquisition)
     : runAcquisition();
 }
 
@@ -217,9 +217,9 @@ export class PaymentSessionRepository {
    * Transitions an ACTIVE session to PROCESSING upon customer clicking Payment Done.
    * Starts independent 30-second verification timer.
    */
-  transitionToProcessing(sessionId, durationMs = 30000) {
-    return this.db.transaction(() => {
-      const session = this.findById(sessionId);
+  async transitionToProcessing(sessionId, durationMs = 30000) {
+    return await this.db.transaction(async () => {
+      const session = await this.findById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
 
       // Idempotency: if already processing, return existing
@@ -235,13 +235,13 @@ export class PaymentSessionRepository {
       const nowIso = now.toISOString();
       const processingExpiresAt = new Date(now.getTime() + durationMs).toISOString();
 
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_sessions
         SET status = ?, processing_started_at = ?, processing_expires_at = ?, updated_at = ?
         WHERE id = ? AND status = ?
       `, [PaymentStatus.PROCESSING, nowIso, processingExpiresAt, nowIso, sessionId, PaymentStatus.ACTIVE]);
 
-      return this.findById(sessionId);
+      return await this.findById(sessionId);
     });
   }
 
@@ -249,9 +249,9 @@ export class PaymentSessionRepository {
    * Transitions session to terminal state (SUCCESS, FAILED, EXPIRED, CANCELLED).
    * Atomically releases receiving account slot.
    */
-  transitionToTerminal(sessionId, targetStatus, options = {}) {
-    return this.db.transaction(() => {
-      const session = this.findById(sessionId);
+  async transitionToTerminal(sessionId, targetStatus, options = {}) {
+    return await this.db.transaction(async () => {
+      const session = await this.findById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
 
       // Immutable outcomes stay put. OBSERVED_SUCCESS and MANUAL_REVIEW may still
@@ -291,7 +291,7 @@ export class PaymentSessionRepository {
         metadata = { ...metadata, replacedBySessionId: options.replacedBySessionId };
       }
 
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_sessions
         SET status = ?, completed_at = ?, attributed_observation_id = ?, metadata = ?, updated_at = ?
         WHERE id = ?
@@ -299,25 +299,25 @@ export class PaymentSessionRepository {
 
       // Release slot on receiving account if this session owned it
       if (session.receivingAccountId) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
           SET is_slot_busy = 0, current_active_session_id = NULL, updated_at = ?
           WHERE id = ? AND (current_active_session_id = ? OR current_active_session_id IS NULL)
         `, [now, session.receivingAccountId, sessionId]);
       }
 
-      return this.findById(sessionId);
+      return await this.findById(sessionId);
     });
   }
 
   /** Record a customer supplied UTR without treating it as payment evidence. */
-  submitManualUtr(sessionId, rawUtr) {
+  async submitManualUtr(sessionId, rawUtr) {
     const utr = String(rawUtr || '').trim().toUpperCase();
     if (!/^[A-Z0-9-]{6,35}$/.test(utr)) {
       throw new Error('Enter a valid UPI reference (6–35 letters or digits).');
     }
-    return this.db.transaction(() => {
-      const session = this.findById(sessionId);
+    return await this.db.transaction(async () => {
+      const session = await this.findById(sessionId);
       if (!session) throw new Error('Session not found');
       if (session.method !== PaymentMethod.MANUAL_UPI) throw new Error('Manual UTR submission is not enabled for this payment.');
       if (session.status === PaymentStatus.MANUAL_REVIEW && session.customerUtr === utr) return session;
@@ -326,17 +326,17 @@ export class PaymentSessionRepository {
         throw new Error(`Illegal payment state transition: cannot move from '${session.status}' to '${PaymentStatus.MANUAL_REVIEW}'.`);
       }
       const now = new Date().toISOString();
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_sessions
         SET customer_utr = ?, utr_submitted_at = ?, status = ?, completed_at = ?, updated_at = ?
         WHERE id = ? AND status = ?
       `, [utr, now, PaymentStatus.MANUAL_REVIEW, now, now, sessionId, PaymentStatus.ACTIVE]);
-      const updated = this.findById(sessionId);
+      const updated = await this.findById(sessionId);
       if (updated.status !== PaymentStatus.MANUAL_REVIEW || updated.customerUtr !== utr) {
         throw new Error('Payment state changed; refresh and try again.');
       }
       if (session.receivingAccountId) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
           SET is_slot_busy = 0, current_active_session_id = NULL, updated_at = ?
           WHERE id = ? AND current_active_session_id = ?
@@ -346,8 +346,8 @@ export class PaymentSessionRepository {
     });
   }
 
-  findCurrentActiveOrProcessing(receivingAccountId) {
-    const row = this.db.queryOne(`
+  async findCurrentActiveOrProcessing(receivingAccountId) {
+    const row = await this.db.queryOne(`
       SELECT * FROM payment_sessions
       WHERE receiving_account_id = ? AND status IN (?, ?)
       LIMIT 1
@@ -359,15 +359,15 @@ export class PaymentSessionRepository {
       (row.status === PaymentStatus.PROCESSING && row.processing_expires_at && new Date(row.processing_expires_at) <= now);
     if (isStale) {
       const terminalStatus = row.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-      this.transitionToTerminal(row.id, terminalStatus);
+      await this.transitionToTerminal(row.id, terminalStatus);
       return null;
     }
     return this.mapRow(row);
   }
 
-  findCurrentActiveOrProcessingForMerchant(merchantId) {
+  async findCurrentActiveOrProcessingForMerchant(merchantId) {
     if (!merchantId) return null;
-    const row = this.db.queryOne(`
+    const row = await this.db.queryOne(`
       SELECT * FROM payment_sessions
       WHERE merchant_id = ? AND status IN (?, ?)
       ORDER BY created_at DESC
@@ -380,13 +380,13 @@ export class PaymentSessionRepository {
       (row.status === PaymentStatus.PROCESSING && row.processing_expires_at && new Date(row.processing_expires_at) <= now);
     if (isStale) {
       const terminalStatus = row.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-      this.transitionToTerminal(row.id, terminalStatus);
+      await this.transitionToTerminal(row.id, terminalStatus);
       return null;
     }
     return this.mapRow(row);
   }
 
-  findActiveForCustomer(customerId, excludeSessionId = null) {
+  async findActiveForCustomer(customerId, excludeSessionId = null) {
     if (!customerId) return null;
     let query = `
       SELECT * FROM payment_sessions
@@ -398,7 +398,7 @@ export class PaymentSessionRepository {
       params.push(excludeSessionId);
     }
     query += ` ORDER BY created_at DESC LIMIT 1 `;
-    const row = this.db.queryOne(query, params);
+    const row = await this.db.queryOne(query, params);
 
     if (!row) return null;
     const now = new Date();
@@ -406,13 +406,13 @@ export class PaymentSessionRepository {
       (row.status === PaymentStatus.PROCESSING && row.processing_expires_at && new Date(row.processing_expires_at) <= now);
     if (isStale) {
       const terminalStatus = row.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-      this.transitionToTerminal(row.id, terminalStatus);
+      await this.transitionToTerminal(row.id, terminalStatus);
       return null;
     }
     return this.mapRow(row);
   }
 
-  findActiveForDevice(deviceId, excludeSessionId = null) {
+  async findActiveForDevice(deviceId, excludeSessionId = null) {
     if (!deviceId) return null;
     let query = `
       SELECT * FROM payment_sessions
@@ -424,7 +424,7 @@ export class PaymentSessionRepository {
       params.push(excludeSessionId);
     }
     query += ` ORDER BY created_at DESC LIMIT 1 `;
-    const row = this.db.queryOne(query, params);
+    const row = await this.db.queryOne(query, params);
 
     if (!row) return null;
     const now = new Date();
@@ -432,13 +432,13 @@ export class PaymentSessionRepository {
       (row.status === PaymentStatus.PROCESSING && row.processing_expires_at && new Date(row.processing_expires_at) <= now);
     if (isStale) {
       const terminalStatus = row.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-      this.transitionToTerminal(row.id, terminalStatus);
+      await this.transitionToTerminal(row.id, terminalStatus);
       return null;
     }
     return this.mapRow(row);
   }
 
-  findConflictingActiveSession({ customerId = null, deviceId = null, excludeSessionId = null }) {
+  async findConflictingActiveSession({ customerId = null, deviceId = null, excludeSessionId = null }) {
     if (!customerId && !deviceId) return null;
     let query = `
       SELECT * FROM payment_sessions
@@ -460,7 +460,7 @@ export class PaymentSessionRepository {
       params.push(deviceId);
     }
     query += ` ORDER BY created_at DESC LIMIT 1 `;
-    const row = this.db.queryOne(query, params);
+    const row = await this.db.queryOne(query, params);
 
     if (!row) return null;
     const now = new Date();
@@ -468,15 +468,15 @@ export class PaymentSessionRepository {
       (row.status === PaymentStatus.PROCESSING && row.processing_expires_at && new Date(row.processing_expires_at) <= now);
     if (isStale) {
       const terminalStatus = row.status === PaymentStatus.PROCESSING ? PaymentStatus.FAILED : PaymentStatus.EXPIRED;
-      this.transitionToTerminal(row.id, terminalStatus);
+      await this.transitionToTerminal(row.id, terminalStatus);
       return null;
     }
     return this.mapRow(row);
   }
 
-  findAllActiveOrPendingForCustomer(customerId) {
+  async findAllActiveOrPendingForCustomer(customerId) {
     if (!customerId) return [];
-    const rows = this.db.query(`
+    const rows = await this.db.query(`
       SELECT * FROM payment_sessions
       WHERE customer_id = ? AND status IN (?, ?, ?, ?)
       ORDER BY created_at DESC
@@ -484,8 +484,8 @@ export class PaymentSessionRepository {
     return rows.map(r => this.mapRow(r));
   }
 
-  findQueuedSessions(receivingAccountId) {
-    const rows = this.db.query(`
+  async findQueuedSessions(receivingAccountId) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_sessions
       WHERE receiving_account_id = ? AND status = ?
       ORDER BY queue_position ASC, created_at ASC
@@ -494,8 +494,8 @@ export class PaymentSessionRepository {
     return rows.map(r => this.mapRow(r));
   }
 
-  getNextQueuedSession(receivingAccountId) {
-    const row = this.db.queryOne(`
+  async getNextQueuedSession(receivingAccountId) {
+    const row = await this.db.queryOne(`
       SELECT * FROM payment_sessions
       WHERE receiving_account_id = ? AND status = ?
       ORDER BY queue_position ASC, created_at ASC
@@ -509,19 +509,19 @@ export class PaymentSessionRepository {
   /**
    * Re-indexes remaining queued sessions after a promotion.
    */
-  reindexQueue(receivingAccountId) {
-    const queued = this.findQueuedSessions(receivingAccountId);
+  async reindexQueue(receivingAccountId) {
+    const queued = await this.findQueuedSessions(receivingAccountId);
     let pos = 1;
     for (const session of queued) {
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_sessions SET queue_position = ?, updated_at = ?
         WHERE id = ?
       `, [pos++, new Date().toISOString(), session.id]);
     }
   }
 
-  findRecentlyExpiredOrFailed(receivingAccountId, sinceDate) {
-    const rows = this.db.query(`
+  async findRecentlyExpiredOrFailed(receivingAccountId, sinceDate) {
+    const rows = await this.db.query(`
       SELECT * FROM payment_sessions
       WHERE receiving_account_id = ?
         AND status IN (?, ?, ?)
@@ -542,9 +542,9 @@ export class PaymentSessionRepository {
    * @param {{ finalizeSuccess?: boolean }} [options={}]
    * @returns {{ session: any, level: number, sources: string[], tag: string, isFirstSuccess: boolean }}
    */
-  recordVerificationSource(sessionId, source, observationId, options = {}) {
-    return this.db.transaction(() => {
-      const session = this.findById(sessionId);
+  async recordVerificationSource(sessionId, source, observationId, options = {}) {
+    return await this.db.transaction(async () => {
+      const session = await this.findById(sessionId);
       if (!session) throw new Error(`Payment session not found: ${sessionId}`);
 
       // A dead outcome is final. recordVerificationSource is called from the attribution engine
@@ -605,7 +605,7 @@ export class PaymentSessionRepository {
       }
       const now = new Date().toISOString();
 
-      this.db.execute(`
+      await this.db.execute(`
         UPDATE payment_sessions
         SET status = ?,
             verification_level = ?,
@@ -628,14 +628,14 @@ export class PaymentSessionRepository {
 
       // If this transition made it terminal SUCCESS, release slot on receiving account
       if (targetStatus === PaymentStatus.OBSERVED_SUCCESS && session.receivingAccountId) {
-        this.db.execute(`
+        await this.db.execute(`
           UPDATE payment_receiving_accounts
           SET is_slot_busy = 0, current_active_session_id = NULL, updated_at = ?
           WHERE id = ? AND current_active_session_id = ?
         `, [now, session.receivingAccountId, sessionId]);
       }
 
-      const updated = this.findById(sessionId);
+      const updated = await this.findById(sessionId);
       return {
         session: updated,
         level,
@@ -646,13 +646,13 @@ export class PaymentSessionRepository {
     });
   }
 
-  bindDevice(sessionId, deviceId) {
+  async bindDevice(sessionId, deviceId) {
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE payment_sessions SET device_id = ?, updated_at = ? WHERE id = ?',
       [deviceId, now, sessionId]
     );
-    return this.findById(sessionId);
+    return await this.findById(sessionId);
   }
 
   mapRow(row) {

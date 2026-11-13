@@ -36,7 +36,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
   process.env.NODE_ENV = 'test';
   process.env.YOUPI_ALLOWED_RETURN_ORIGINS = 'https://novacommerce.com http://localhost:5984';
   const testDb = new Database({ inMemory: true });
-  runMigrations(testDb);
+  await runMigrations(testDb);
 
   const merchantRepo = new MerchantRepository(testDb);
   const accountRepo = new ReceivingAccountRepository(testDb);
@@ -50,7 +50,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
   const attributionEngine = new AttributionEngine({ sessionRepo, obsRepo });
   const webhookEngine = new WebhookEngine({ db: testDb, merchantRepo });
 
-  const merchant = merchantRepo.create({
+  const merchant = await merchantRepo.create({
     businessName: 'Nova Commerce Ltd',
     slug: 'nova-store',
     contactEmail: 'support@novacommerce.com',
@@ -65,7 +65,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     }
   });
 
-  const receivingAccount = accountRepo.create({
+  const receivingAccount = await accountRepo.create({
     merchantId: merchant.id,
     upiId: 'novastore@hdfcbank',
     payeeName: 'Nova Commerce India',
@@ -220,7 +220,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
 
     // --- AUTO LOGIN (11 - 14) ---
     // 11 & 12. Return to checkout with valid remembered session
-    const autoVerify = customerSessionRepo.findByToken(loginEmail.body.token);
+    const autoVerify = await customerSessionRepo.findByToken(loginEmail.body.token);
     assert.ok(autoVerify);
     assert.equal(autoVerify.customer.name, 'Gaurav Sharma');
 
@@ -240,14 +240,14 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     const p1StateB = await httpReq('GET', `${apiBase}/api/v1/checkout/${p1.paymentId}/state`);
     assert.equal(p1StateA.body.paymentId, p1.paymentId);
     assert.equal(p1StateB.body.paymentId, p1.paymentId);
-    sessionRepo.transitionToTerminal(p1.paymentId, PaymentStatus.CANCELLED);
+    await sessionRepo.transitionToTerminal(p1.paymentId, PaymentStatus.CANCELLED);
 
     // 14. Expired auth session requires reauthentication
-    const expiredSess = customerSessionRepo.create({
+    const expiredSess = await customerSessionRepo.create({
       customerId: reg1.body.customer.id,
       ttlHours: -1
     });
-    assert.equal(customerSessionRepo.findByToken(expiredSess.token), null);
+    assert.equal(await customerSessionRepo.findByToken(expiredSess.token), null);
     const meExpired = await httpReq('GET', `${apiBase}/api/v1/customer/me`, null, {
       'Authorization': `Bearer ${expiredSess.token}`
     });
@@ -260,15 +260,15 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
       amount: '200.00',
       autoActivate: false
     });
-    const unauthSession = sessionRepo.findById(unauthPayment.paymentId);
+    const unauthSession = await sessionRepo.findById(unauthPayment.paymentId);
     assert.ok(unauthSession.status === PaymentStatus.INITIATED || unauthSession.status === PaymentStatus.QUEUED);
     assert.equal(unauthSession.expiresAt, null);
     assert.equal(unauthSession.customerId, null);
-    const accountStateBefore = accountRepo.findById(receivingAccount.id);
+    const accountStateBefore = await accountRepo.findById(receivingAccount.id);
     assert.equal(accountStateBefore.isSlotBusy, false);
 
     // 18. Customer authenticates successfully
-    const authSess = customerSessionRepo.create({ customerId: reg1.body.customer.id });
+    const authSess = await customerSessionRepo.create({ customerId: reg1.body.customer.id });
     assert.ok(authSess.token);
 
     // 19. Payment session then starts
@@ -279,10 +279,10 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(bindRes.body.status, PaymentStatus.ACTIVE);
     assert.ok(bindRes.body.expiresAt);
 
-    const activatedSession = sessionRepo.findById(unauthPayment.paymentId);
+    const activatedSession = await sessionRepo.findById(unauthPayment.paymentId);
     assert.equal(activatedSession.status, PaymentStatus.ACTIVE);
     assert.equal(activatedSession.customerId, reg1.body.customer.id);
-    const accountStateAfter = accountRepo.findById(receivingAccount.id);
+    const accountStateAfter = await accountRepo.findById(receivingAccount.id);
     assert.equal(accountStateAfter.isSlotBusy, true);
 
     // --- ACCOUNT SWITCHING (20 - 26) ---
@@ -343,8 +343,8 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(switchExpired.status, 401);
 
     // 26. Switching account does not mutate another account's data
-    const c1 = customerRepo.findById(reg1.body.customer.id);
-    const c2 = customerRepo.findById(reg2.body.customer.id);
+    const c1 = await customerRepo.findById(reg1.body.customer.id);
+    const c2 = await customerRepo.findById(reg2.body.customer.id);
     assert.equal(c1.name, 'Gaurav Sharma');
     assert.equal(c2.name, 'Pooja Verma');
     assert.notEqual(c1.email, c2.email);
@@ -364,7 +364,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(accountsStore.length, 2);
 
     // 29. Logout does not delete customer database record
-    assert.ok(customerRepo.findById(reg1.body.customer.id));
+    assert.ok(await customerRepo.findById(reg1.body.customer.id));
 
     // 30. User can log back into saved account
     const reLogin = await httpReq('POST', `${apiBase}/api/v1/customer/login`, {
@@ -384,7 +384,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
 
     // --- PAYMENT INTEGRITY (32 - 36) ---
     // 32, 33, 34, 35. Identity immutability and anti-hijacking
-    const payActive = sessionRepo.findById(unauthPayment.paymentId);
+    const payActive = await sessionRepo.findById(unauthPayment.paymentId);
     assert.equal(payActive.customerId, reg1.body.customer.id);
 
     const hijackRes = await httpReq('POST', `${apiBase}/api/v1/checkout/${unauthPayment.paymentId}/bind-customer`, {
@@ -396,7 +396,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
       customerId: reg2.body.customer.id
     });
     assert.equal(tamperRes.status, 409);
-    assert.equal(sessionRepo.findById(unauthPayment.paymentId).customerId, reg1.body.customer.id);
+    assert.equal(await sessionRepo.findById(unauthPayment.paymentId).customerId, reg1.body.customer.id);
 
     // 36. Existing payment verification continues working
     const obs = attributionEngine.processObservation({
@@ -437,7 +437,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.ok(bindDemo.body.expiresAt);
 
     // Complete demo payment to free slot for next test
-    sessionRepo.transitionToTerminal(demoBuy.body.paymentId, PaymentStatus.SUCCESS);
+    await sessionRepo.transitionToTerminal(demoBuy.body.paymentId, PaymentStatus.SUCCESS);
     testDb.execute('UPDATE payment_receiving_accounts SET is_slot_busy = 0, current_active_session_id = NULL WHERE id = ?', [receivingAccount.id]);
 
     // --- MERCHANT INTEGRATION (41 - 43) ---
@@ -462,7 +462,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(genericBind.body.customer.name, 'Gaurav Sharma');
 
     // Complete generic payment to free slot for queue tests
-    sessionRepo.transitionToTerminal(genericPay.paymentId, PaymentStatus.SUCCESS);
+    await sessionRepo.transitionToTerminal(genericPay.paymentId, PaymentStatus.SUCCESS);
     testDb.execute('UPDATE payment_receiving_accounts SET is_slot_busy = 0, current_active_session_id = NULL WHERE id = ?', [receivingAccount.id]);
 
     // --- REGRESSION (44 - 53) ---
@@ -494,7 +494,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(intent.includes('cu='), false);
 
     // 46. Existing merchant/non-merchant UPI behavior works
-    const nonMerchantAccount = accountRepo.create({
+    const nonMerchantAccount = await accountRepo.create({
       merchantId: merchant.id,
       upiId: 'personal.store@okhdfcbank',
       payeeName: 'Personal Store Account',
@@ -504,7 +504,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(nonMerchantAccount.isMerchantEnabled, false);
 
     // 47. Queue logic works
-    const qPay1 = sessionRepo.create({
+    const qPay1 = await sessionRepo.create({
       merchantId: merchant.id,
       receivingAccountId: receivingAccount.id,
       orderId: 'QUEUE-ORD-1',
@@ -514,7 +514,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     const qRes1 = queueEngine.enqueueOrActivate(qPay1.id, receivingAccount.id);
     assert.equal(qRes1.status, PaymentStatus.ACTIVE);
 
-    const qPay2 = sessionRepo.create({
+    const qPay2 = await sessionRepo.create({
       merchantId: merchant.id,
       receivingAccountId: receivingAccount.id,
       orderId: 'QUEUE-ORD-2',
@@ -544,7 +544,7 @@ test('Full 53-Point Customer Identity, Authentication & Payment Invariant Matrix
     assert.equal(qObs.paymentSessionId, qPay1.id);
 
     // 50. Webhook delivery works
-    const whResult = await webhookEngine.dispatch('SUCCESS', sessionRepo.findById(qPay1.id));
+    const whResult = await webhookEngine.dispatch('SUCCESS', await sessionRepo.findById(qPay1.id));
     assert.ok(whResult.deliveryId);
 
     // 51. Merchant dashboard works

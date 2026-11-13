@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Database, runMigrations } from '../index.js';
 
-test('Production & Development Database Safe Customer Reset and Zero Residue Invariant', () => {
+test('Production & Development Database Safe Customer Reset and Zero Residue Invariant', async () => {
   // 1. PROD RESET & VERIFICATION
   const prodPath = path.resolve('data/youpi_pg.sqlite');
   if (!fs.existsSync(prodPath)) {
@@ -13,7 +13,7 @@ test('Production & Development Database Safe Customer Reset and Zero Residue Inv
       fs.mkdirSync(parentDir, { recursive: true });
     }
     const initDb = new Database({ dbPath: prodPath });
-    runMigrations(initDb);
+    await runMigrations(initDb);
     initDb.close();
   }
   assert.ok(fs.existsSync(prodPath), `Production DB must exist at ${prodPath}`);
@@ -36,7 +36,7 @@ test('Production & Development Database Safe Customer Reset and Zero Residue Inv
   try { prodDb.execute('DROP TABLE IF EXISTS customer_sessions;'); } catch {}
   try { prodDb.execute('DROP TABLE IF EXISTS customers;'); } catch {}
 
-  runMigrations(prodDb);
+  await runMigrations(prodDb);
 
   prodDb.execute('DELETE FROM customer_sessions;');
   prodDb.execute('DELETE FROM customers;');
@@ -74,7 +74,7 @@ test('Production & Development Database Safe Customer Reset and Zero Residue Inv
     try { devDb.execute('DROP TABLE IF EXISTS customer_sessions;'); } catch {}
     try { devDb.execute('DROP TABLE IF EXISTS customers;'); } catch {}
 
-    runMigrations(devDb);
+    await runMigrations(devDb);
 
     devDb.execute('DELETE FROM customer_sessions;');
     devDb.execute('DELETE FROM customers;');

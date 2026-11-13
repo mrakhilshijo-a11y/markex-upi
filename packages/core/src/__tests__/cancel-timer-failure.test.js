@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { Database, runMigrations, PaymentSessionRepository } from '@youpi/db';
 import { TimingEngine } from '../timing-engine.js';
 
-test('failed cancel transaction preserves an actual ACTIVE session and deadline', () => {
+test('failed cancel transaction preserves an actual ACTIVE session and deadline', async () => {
   const db = new Database({ inMemory: true });
-  const merchant = runMigrations(db).defaultMerchant;
+  const merchant = await runMigrations(db).defaultMerchant;
   const repo = new PaymentSessionRepository(db);
   const session = repo.create({ merchantId: merchant.id, receivingAccountId: '00000000-0000-0000-0000-000000000002', orderId: 'CANCEL-ROLLBACK', amountPaise: 10000n });
   repo.acquireSlotAtomic(session.id, session.receivingAccountId, 60000);
@@ -21,7 +21,7 @@ test('failed cancel transaction preserves an actual ACTIVE session and deadline'
   } finally {
     db.transaction = transaction;
     engine.destroy();
-    db.close();
+    await db.close();
   }
 });
 

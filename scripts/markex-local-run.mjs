@@ -36,6 +36,7 @@ function loadEnvFile(filePath) {
 }
 
 loadEnvFile(path.join(root, '.env'));
+loadEnvFile(path.join(root, '.env.local'));
 
 process.env.YOUPI_ALLOW_LOCALHOST_MODE = process.env.YOUPI_ALLOW_LOCALHOST_MODE || 'true';
 process.env.YOUPI_MODE = process.env.YOUPI_MODE || 'localhost';

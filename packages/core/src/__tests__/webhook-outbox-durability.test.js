@@ -6,7 +6,7 @@ import { WebhookEngine } from '../webhook-engine.js';
 
 function fixture(slug) {
   const db = new Database({ inMemory: true });
-  runMigrations(db);
+  await runMigrations(db);
   const merchants = new MerchantRepository(db);
   const sessions = new PaymentSessionRepository(db);
   const merchant = merchants.create({
@@ -54,7 +54,7 @@ test('outbox survives terminal transition and is prepared before network dispatc
     assert.equal(requestCount, 1, 'duplicate terminal events MUST NOT issue another delivery');
   } finally {
     globalThis.fetch = previousFetch;
-    db.close();
+    await db.close();
   }
 });
 
@@ -94,7 +94,7 @@ test('interrupted first attempt remains eligible for restart retry with the same
     assert.equal(db.queryOne('SELECT is_successful FROM webhook_deliveries WHERE id = ?', [pending.id]).is_successful, 1);
   } finally {
     globalThis.fetch = previousFetch;
-    db.close();
+    await db.close();
   }
 });
 
@@ -120,6 +120,6 @@ test('missing merchant signing key preserves an outboxed event until configurati
     assert.equal(attempted, 1);
   } finally {
     globalThis.fetch = previousFetch;
-    db.close();
+    await db.close();
   }
 });

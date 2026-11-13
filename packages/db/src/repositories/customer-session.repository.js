@@ -23,7 +23,7 @@ export class CustomerSessionRepository {
    *   ttlHours?: number
    * }} data
    */
-  create(data) {
+  async create(data) {
     const id = crypto.randomUUID();
     const token = `csess_${crypto.randomBytes(32).toString('hex')}`;
     const ttlHours = data.ttlHours || 720; // 30 days default
@@ -38,7 +38,7 @@ export class CustomerSessionRepository {
     // The bearer token is returned to the client once and never read back from the database,
     // so only a keyed blind index is stored. A database dump therefore cannot be replayed
     // as valid sessions, which a plaintext (or plain-hashed) column would allow.
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.customerId,
       blindIndex(token, INDEX_NS),
@@ -64,26 +64,26 @@ export class CustomerSessionRepository {
    * @param {string} token
    * @returns {{ session: any, customer: any } | null}
    */
-  findByToken(token) {
+  async findByToken(token) {
     if (!token || typeof token !== 'string') return null;
 
-    const row = this.db.queryOne(
+    const row = await this.db.queryOne(
       'SELECT * FROM customer_sessions WHERE token = ? AND is_active = 1',
       [blindIndex(token, INDEX_NS)]
     );
 
     // Rows written before index-only storage held the raw token.
     if (!row && typeof token === 'string' && token.startsWith('csess_') && token.length < 100) {
-      const legacy = this.db.queryOne(
+      const legacy = await this.db.queryOne(
         'SELECT * FROM customer_sessions WHERE token = ? AND is_active = 1',
         [token]
       );
       if (legacy) {
         // Re-index on first successful use so the plaintext row does not linger.
         try {
-          this.db.execute('UPDATE customer_sessions SET token = ? WHERE id = ?', [blindIndex(token, INDEX_NS), legacy.id]);
+          await this.db.execute('UPDATE customer_sessions SET token = ? WHERE id = ?', [blindIndex(token, INDEX_NS), legacy.id]);
         } catch {}
-        return this.findByToken(token);
+        return await this.findByToken(token);
       }
     }
 
@@ -93,7 +93,7 @@ export class CustomerSessionRepository {
     if (expiresAt.getTime() <= Date.now()) {
       // Mark expired
       try {
-        this.db.execute('UPDATE customer_sessions SET is_active = 0, updated_at = ? WHERE id = ?', [
+        await this.db.execute('UPDATE customer_sessions SET is_active = 0, updated_at = ? WHERE id = ?', [
           new Date().toISOString(),
           row.id
         ]);
@@ -113,7 +113,7 @@ export class CustomerSessionRepository {
     if (this.customerRepo) {
       customer = this.customerRepo.findById(row.customer_id);
     } else {
-      const custRow = this.db.queryOne('SELECT * FROM customers WHERE id = ?', [row.customer_id]);
+      const custRow = await this.db.queryOne('SELECT * FROM customers WHERE id = ?', [row.customer_id]);
       if (custRow) {
         customer = {
           id: custRow.id,
@@ -139,15 +139,15 @@ export class CustomerSessionRepository {
    * @param {string} token
    * @returns {boolean}
    */
-  revokeToken(token) {
+  async revokeToken(token) {
     if (!token) return false;
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE customer_sessions SET is_active = 0, updated_at = ? WHERE token = ?',
       [now, blindIndex(token, INDEX_NS)]
     );
     // Also clear any legacy plaintext row so logout always revokes.
-    this.db.execute(
+    await this.db.execute(
       'UPDATE customer_sessions SET is_active = 0, updated_at = ? WHERE token = ?',
       [now, token]
     );
@@ -158,10 +158,10 @@ export class CustomerSessionRepository {
    * Revokes all active sessions for a customer.
    * @param {string} customerId
    */
-  revokeAllForCustomer(customerId) {
+  async revokeAllForCustomer(customerId) {
     if (!customerId) return;
     const now = new Date().toISOString();
-    this.db.execute(
+    await this.db.execute(
       'UPDATE customer_sessions SET is_active = 0, updated_at = ? WHERE customer_id = ?',
       [now, customerId]
     );
@@ -171,8 +171,8 @@ export class CustomerSessionRepository {
    * Returns count of currently active sessions.
    * @returns {number}
    */
-  countActive() {
-    const row = this.db.queryOne(
+  async countActive() {
+    const row = await this.db.queryOne(
       'SELECT COUNT(*) as c FROM customer_sessions WHERE is_active = 1 AND expires_at > ?',
       [new Date().toISOString()]
     );

@@ -9,7 +9,7 @@ export class AuditLogRepository {
     this.db = db;
   }
 
-  log(data) {
+  async log(data) {
     const id = data.id || crypto.randomUUID();
     const now = new Date().toISOString();
     const details = typeof data.details === 'object' ? JSON.stringify(data.details) : (data.details || '{}');
@@ -19,7 +19,7 @@ export class AuditLogRepository {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    this.db.execute(sql, [
+    await this.db.execute(sql, [
       id,
       data.merchantId || null,
       data.entityType,
@@ -35,16 +35,16 @@ export class AuditLogRepository {
     return id;
   }
 
-  findByEntity(entityType, entityId) {
-    const rows = this.db.query(
+  async findByEntity(entityType, entityId) {
+    const rows = await this.db.query(
       'SELECT * FROM audit_logs WHERE entity_type = ? AND entity_id = ? ORDER BY created_at ASC',
       [entityType, entityId]
     );
     return rows.map(r => this.mapRow(r));
   }
 
-  findByMerchant(merchantId, limit = 100) {
-    const rows = this.db.query(
+  async findByMerchant(merchantId, limit = 100) {
+    const rows = await this.db.query(
       'SELECT * FROM audit_logs WHERE merchant_id = ? ORDER BY created_at DESC LIMIT ?',
       [merchantId, limit]
     );
