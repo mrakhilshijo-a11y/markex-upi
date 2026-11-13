@@ -349,10 +349,9 @@ export async function createPaymentApp(customDb = null, options = {}) {
   // interval callback, because an exception thrown from a timer callback is
   // an unhandled error that can take the process down.
   const webhookRetryDaemon = setInterval(() => {
-    try {
-      const outcome = await webhookEngine.recoverOutbox().then(() => await webhookEngine.retryPending());
-      if (outcome && typeof outcome.catch === 'function') outcome.catch(() => {});
-    } catch {}
+    webhookEngine.recoverOutbox()
+      .then(() => webhookEngine.retryPending())
+      .catch(() => {});
   }, Number(process.env.WEBHOOK_RETRY_INTERVAL_MS || 5000));
 
   if (webhookRetryDaemon.unref) webhookRetryDaemon.unref();

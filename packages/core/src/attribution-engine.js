@@ -776,7 +776,7 @@ export class AttributionEngine {
         const targetMerchantId = currentSession.merchantId;
         const targetAmountPaise = currentSession.amountPaise;
 
-        const graceTimer = setTimeout(() => {
+        const graceTimer = setTimeout(async () => {
           this.pendingGraceTimers.delete(targetSessionId);
           // Check if session became terminal during the grace window
           const latestSession = await this.sessionRepo.findById(targetSessionId);

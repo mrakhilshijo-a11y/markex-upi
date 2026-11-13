@@ -10,7 +10,7 @@ import {
 /**
  * Resolves a verified customer ID strictly from a valid customer session token.
  */
-function resolveAuthenticatedCustomerId(req, body, ctx) {
+async function resolveAuthenticatedCustomerId(req, body, ctx) {
   if (!ctx.customerSessionRepo) return null;
   let token = body?.token || req.headers['x-customer-token'] || null;
   if (!token) {
@@ -91,7 +91,7 @@ export function registerDeviceRoutes(server, ctx) {
     const normalized = normalizeDeviceSignals(clientSignals);
 
     // Optional customer association strictly from verified customer session token (never bare customerId)
-    const customerId = resolveAuthenticatedCustomerId(req, body, ctx);
+    const customerId = await resolveAuthenticatedCustomerId(req, body, ctx);
 
     // Check if device with this exact public key already exists
     const existing = await ctx.deviceRepo.findByPublicKey(trimmedPublicKey);
