@@ -1585,13 +1585,49 @@
       return headers;
     }
 
-    async function loadState() {
+    async function clearStoredDeviceIdentity() {
+      try {
+        localStorage.removeItem('ypg_device_id');
+        localStorage.removeItem('ypg_device_token');
+      } catch {}
+      try {
+        const db = await DeviceIdentity.openDb();
+        if (db) {
+          await new Promise((resolve) => {
+            const tx = db.transaction(DeviceIdentity.storeName, 'readwrite');
+            tx.objectStore(DeviceIdentity.storeName).delete('primary_device');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+          });
+        }
+      } catch {}
+      DeviceIdentity.currentDeviceId = null;
+      DeviceIdentity.currentDeviceToken = null;
+    }
+
+    function isStaleDeviceCredentialError(data) {
+      const code = data?.code || data?.error || '';
+      if (code === 'DEVICE_REVOKED' || code === 'DEVICE_TOKEN_INVALID' || code === 'DEVICE_CREDENTIALS_REQUIRED') {
+        return true;
+      }
+      return data?.error === 'DUPLICATE_SESSION_DETECTED' && !data?.boundDeviceId;
+    }
+
+    async function loadState(options = {}) {
+      const allowDeviceReset = options.allowDeviceReset !== false;
       try {
         await DeviceIdentity.getOrRegister();
         const headers = getApiHeaders();
 
         const res = await fetch(`${API_BASE}/api/v1/checkout/${PAYMENT_ID}/state`, { headers });
         const data = await res.json().catch(() => ({}));
+
+        if ((res.status === 409 || data.error === 'DUPLICATE_SESSION_DETECTED' || data.error === 'DEVICE_REVOKED')
+          && allowDeviceReset
+          && isStaleDeviceCredentialError(data)) {
+          await clearStoredDeviceIdentity();
+          return loadState({ allowDeviceReset: false });
+        }
 
         if (res.status === 409 || data.error === 'DUPLICATE_SESSION_DETECTED') {
           renderDuplicateSession(data);

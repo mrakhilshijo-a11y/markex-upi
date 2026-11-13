@@ -119,7 +119,9 @@ export function serializeForScript(value) {
 }
 
 // Placeholders that land inside a <script> block rather than HTML markup.
-const SCRIPT_PLACEHOLDERS = new Set(['PAYMENT_ID', 'API_BASE_URL', 'AMOUNT']);
+const SCRIPT_PLACEHOLDERS = new Set(['PAYMENT_ID', 'API_BASE_URL', 'AMOUNT', 'GUEST_CHECKOUT_MODE']);
+// Already JSON-serialized for <script type="application/json"> — do not HTML-escape.
+const RAW_SCRIPT_PLACEHOLDERS = new Set(['INITIAL_STATE_JSON']);
 
 /**
  * Replaces {{PLACEHOLDER}} tokens in the checkout template.
@@ -132,6 +134,7 @@ export function renderTemplate(template, values) {
   return template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, key) => {
     if (!Object.prototype.hasOwnProperty.call(values, key)) return match;
     const value = values[key];
+    if (RAW_SCRIPT_PLACEHOLDERS.has(key)) return String(value ?? '');
     return SCRIPT_PLACEHOLDERS.has(key) ? escapeJsString(value) : escapeHtml(value);
   });
 }

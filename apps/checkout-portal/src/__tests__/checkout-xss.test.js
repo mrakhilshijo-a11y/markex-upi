@@ -133,6 +133,18 @@ describe('Checkout Portal XSS / Redirect Hardening', () => {
       const out = renderTemplate('{{ORDER_ID}}|{{PAYMENT_ID}}', { ORDER_ID: '<b>', PAYMENT_ID: '<b>' });
       assert.equal(out, '&lt;b&gt;|\\u003cb\\u003e');
     });
+
+    test('keeps INITIAL_STATE_JSON as raw JSON inside the script block', () => {
+      const json = serializeForScript({ amount: '5000.00', merchantName: 'MARKEX' });
+      const out = renderTemplate('<script id="ypgInitialState" type="application/json">{{INITIAL_STATE_JSON}}</script>', {
+        INITIAL_STATE_JSON: json
+      });
+      assert.equal(out.includes('&quot;'), false);
+      assert.deepEqual(JSON.parse(out.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '')), {
+        amount: '5000.00',
+        merchantName: 'MARKEX'
+      });
+    });
   });
 
   describe('GET /checkout/:id with a hostile payment id', () => {
